@@ -1,0 +1,17 @@
+{
+  "name": "GetCRX — Extension Unpacker & Auditor",
+  "short_name": "GetCRX",
+  "description": "Extract, inspect, beautify, and audit the source code and security attack surface of any Chrome or Firefox extension.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#121014",
+  "theme_color": "#E8A33D",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

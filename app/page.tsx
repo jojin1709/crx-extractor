@@ -32,6 +32,15 @@ import {
   DiffLine
 } from "@/lib/diff-engine";
 import {
+  harvestNetworkEndpoints,
+  NetworkHarvestResult,
+  NetworkEndpoint
+} from "@/lib/network-harvester";
+import {
+  PERMISSIONS_DATABASE,
+  PermissionDoc
+} from "@/lib/permissions-encyclopedia";
+import {
   ShieldAlert,
   ShieldCheck,
   Shield,
@@ -72,9 +81,11 @@ import {
   Minimize2,
   Command,
   Sliders,
-  Plus,
-  Minus,
-  RefreshCw
+  Globe,
+  Radio,
+  History,
+  Trash2,
+  BookOpen
 } from "lucide-react";
 
 type Meta = {
@@ -91,6 +102,13 @@ interface SearchMatch {
   snippet: string;
 }
 
+interface RecentAuditItem {
+  id: string;
+  name: string;
+  icon: string | null;
+  date: number;
+}
+
 const POPULAR_EXTENSIONS = [
   { name: "uBlock Lite", id: "ddkjiahejlhfcafbddmgiahcphecmpfh" },
   { name: "Dark Reader", id: "eimadpbcbfnmbkopoojfekhnkhdbieeh" },
@@ -100,7 +118,7 @@ const POPULAR_EXTENSIONS = [
   { name: "Bitwarden", id: "nngceckbapebfimnlniiiahkandclblb" }
 ];
 
-type ActiveTab = "overview" | "explorer" | "security" | "mv3" | "diff";
+type ActiveTab = "overview" | "explorer" | "security" | "network" | "diff" | "mv3";
 
 export default function HomeWrapper() {
   return (
@@ -126,6 +144,7 @@ function Home() {
   const [isDragging, setIsDragging] = useState(false);
   const [showIdGuide, setShowIdGuide] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [showEncyclopedia, setShowEncyclopedia] = useState(false);
 
   // Archive inspection state
   const [zipInstance, setZipInstance] = useState<JSZip | null>(null);
@@ -159,6 +178,17 @@ function Home() {
   const [customRuleMatches, setCustomRuleMatches] = useState<Array<{ file: string; line: number; snippet: string }>>([]);
   const [isScanningCustomRule, setIsScanningCustomRule] = useState(false);
 
+  // Network Endpoints & Telemetry Harvester
+  const [networkHarvest, setNetworkHarvest] = useState<NetworkHarvestResult | null>(null);
+  const [networkFilter, setNetworkFilter] = useState("");
+
+  // Recent Audits History (LocalStorage)
+  const [recentAudits, setRecentAudits] = useState<RecentAuditItem[]>([]);
+
+  // Permissions Encyclopedia state
+  const [encyclopediaSearch, setEncyclopediaSearch] = useState("");
+  const [encyclopediaCategory, setEncyclopediaCategory] = useState<string>("All");
+
   // CRX Package Diff & Comparison Tool State
   const [zipBInstance, setZipBInstance] = useState<JSZip | null>(null);
   const [metaB, setMetaB] = useState<Meta | null>(null);
@@ -168,6 +198,35 @@ function Home() {
   const [isDiffing, setIsDiffing] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Load Recent Audits from LocalStorage on mount
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const saved = localStorage.getItem("getcrx_recent_audits");
+      if (saved) {
+        setRecentAudits(JSON.parse(saved));
+      }
+    } catch {}
+  }, []);
+
+  function saveRecentAudit(item: RecentAuditItem) {
+    setRecentAudits((prev) => {
+      const filtered = prev.filter((p) => p.id !== item.id);
+      const updated = [item, ...filtered].slice(0, 10);
+      try {
+        localStorage.setItem("getcrx_recent_audits", JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+  }
+
+  function clearRecentAudits() {
+    setRecentAudits([]);
+    try {
+      localStorage.removeItem("getcrx_recent_audits");
+    } catch {}
+  }
 
   // Keyboard shortcut for Command Palette (Ctrl+K or Cmd+K)
   useEffect(() => {
@@ -179,6 +238,7 @@ function Home() {
       if (e.key === "Escape") {
         setShowCommandPalette(false);
         setShowIdGuide(false);
+        setShowEncyclopedia(false);
         setIsFullscreenCode(false);
       }
     }
@@ -229,6 +289,7 @@ function Home() {
     setMv3Check(null);
     setDiffResult(null);
     setZipBInstance(null);
+    setNetworkHarvest(null);
     setContentSearchMatches([]);
     setCustomRuleMatches([]);
     setActiveTab("overview");
@@ -246,6 +307,12 @@ function Home() {
 
       setMeta(data);
       setStatus("found");
+      saveRecentAudit({
+        id,
+        name: data.name || id,
+        icon: data.icon,
+        date: Date.now()
+      });
       loadZipData(id);
     } catch {
       setErrorMsg("Failed to reach lookup service.");
@@ -316,13 +383,15 @@ function Home() {
         } catch {}
       }
 
-      // Run deep security scan & MV3 migration check
+      // Run deep security scan & MV3 migration check & network harvester
       setIsScanningSecurity(true);
       try {
         const scan = await runSecurityScan(zip, parsedManifest);
         setSecurityScan(scan);
         const mv3 = checkManifestV3Readiness(parsedManifest || {});
         setMv3Check(mv3);
+        const harvest = await harvestNetworkEndpoints(zip);
+        setNetworkHarvest(harvest);
       } catch (e) {
         console.error("Security scan error:", e);
       } finally {
@@ -426,6 +495,7 @@ function Home() {
     setIsUnpacking(true);
     setSecurityScan(null);
     setMv3Check(null);
+    setNetworkHarvest(null);
     setMeta({
       id: file.name.replace(/\.[^/.]+$/, ""),
       name: file.name,
@@ -478,6 +548,8 @@ function Home() {
       setSecurityScan(scan);
       const mv3 = checkManifestV3Readiness(parsedManifest || {});
       setMv3Check(mv3);
+      const harvest = await harvestNetworkEndpoints(zip);
+      setNetworkHarvest(harvest);
       setIsScanningSecurity(false);
 
       setStatus("found");
@@ -710,6 +782,7 @@ function Home() {
     setMv3Check(null);
     setDiffResult(null);
     setZipBInstance(null);
+    setNetworkHarvest(null);
     setContentSearchMatches([]);
     setCustomRuleMatches([]);
     setActiveTab("overview");
@@ -733,6 +806,24 @@ function Home() {
   const treeNodes = useMemo(() => {
     return buildFileTree(filteredEntries);
   }, [filteredEntries]);
+
+  const filteredNetworkEndpoints = useMemo(() => {
+    if (!networkHarvest) return [];
+    if (!networkFilter.trim()) return networkHarvest.endpoints;
+    const term = networkFilter.toLowerCase();
+    return networkHarvest.endpoints.filter((e) => e.url.toLowerCase().includes(term) || e.domain.toLowerCase().includes(term));
+  }, [networkHarvest, networkFilter]);
+
+  const filteredEncyclopedia = useMemo(() => {
+    return PERMISSIONS_DATABASE.filter((p) => {
+      const matchCat = encyclopediaCategory === "All" || p.category === encyclopediaCategory;
+      const matchSearch =
+        !encyclopediaSearch.trim() ||
+        p.name.toLowerCase().includes(encyclopediaSearch.toLowerCase()) ||
+        p.summary.toLowerCase().includes(encyclopediaSearch.toLowerCase());
+      return matchCat && matchSearch;
+    });
+  }, [encyclopediaSearch, encyclopediaCategory]);
 
   function toggleFolder(folderPath: string) {
     setExpandedFolders((prev) => ({
@@ -777,7 +868,14 @@ function Home() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4 text-xs">
+        <div className="flex items-center gap-3 text-xs">
+          <button
+            onClick={() => setShowEncyclopedia(true)}
+            className="focus-ring rounded px-2.5 py-1 bg-surface border border-line text-muted hover:text-paper text-[11px] font-mono flex items-center gap-1.5 transition-colors hidden sm:flex"
+          >
+            <BookOpen className="w-3 h-3 text-teal" />
+            <span>Permissions Doc</span>
+          </button>
           <button
             onClick={() => setShowCommandPalette(true)}
             className="focus-ring rounded px-2.5 py-1 bg-surface border border-line text-muted hover:text-paper text-[11px] font-mono flex items-center gap-1.5 transition-colors"
@@ -790,7 +888,7 @@ function Home() {
             className="focus-ring rounded text-muted transition-colors hover:text-brass flex items-center gap-1.5"
           >
             <HelpCircle className="w-3.5 h-3.5 text-brass" />
-            <span>How to find ID</span>
+            <span>Where is ID</span>
           </button>
           <span className="text-line hidden sm:inline-block">|</span>
           <span className="font-mono text-muted text-[11px] hidden sm:inline-block">
@@ -804,7 +902,7 @@ function Home() {
         <div className="text-center max-w-2xl mx-auto">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-line bg-surface/80 text-xs text-muted mb-4 shadow-sm">
             <span className="w-2 h-2 rounded-full bg-teal animate-pulse" />
-            <span>Source Code Explorer • Secret Scanner • Version Diff Engine</span>
+            <span>Source Code Explorer • Telemetry Harvester • Version Diff Engine</span>
           </div>
 
           <h1 className="font-display text-4xl sm:text-5xl font-bold tracking-tight leading-[1.1] text-paper">
@@ -816,7 +914,7 @@ function Home() {
 
           <p className="mt-4 text-[15px] leading-relaxed text-muted">
             Paste a Chrome Web Store link, Firefox Add-on URL, or 32-character ID. GetCRX strips binary container headers,
-            formats code, scans for secrets and vulnerabilities, and diffs versions in real time.
+            formats code, harvests network endpoints, and scans for secrets and vulnerabilities in real time.
           </p>
         </div>
 
@@ -874,6 +972,45 @@ function Home() {
             <span>Where is ID?</span>
           </button>
         </div>
+
+        {/* Recent Audits History Chips */}
+        {recentAudits.length > 0 && status === "idle" && (
+          <div className="mt-6 p-4 rounded-xl border border-line bg-surface/60 max-w-2xl mx-auto">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-mono font-semibold text-muted flex items-center gap-1.5">
+                <History className="w-3.5 h-3.5 text-brass" />
+                <span>Recent Audits</span>
+              </span>
+              <button
+                onClick={clearRecentAudits}
+                className="text-[11px] font-mono text-muted/60 hover:text-danger flex items-center gap-1 transition-colors"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>Clear History</span>
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {recentAudits.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => {
+                    setQuery(item.id);
+                    runLookup(item.id);
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg border border-line bg-surface hover:bg-surface2 hover:border-brass/40 transition-colors text-xs flex items-center gap-2 max-w-[200px]"
+                >
+                  {item.icon ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={item.icon} alt="" className="w-3.5 h-3.5 rounded object-contain shrink-0" />
+                  ) : (
+                    <Package className="w-3.5 h-3.5 text-muted shrink-0" />
+                  )}
+                  <span className="truncate font-mono text-[11px] text-paper">{item.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Status Messages */}
         <AnimatePresence mode="wait">
@@ -1051,6 +1188,20 @@ function Home() {
                 </button>
 
                 <button
+                  onClick={() => setActiveTab("network")}
+                  className={`py-3.5 px-4 border-b-2 flex items-center gap-2 transition-colors shrink-0 ${
+                    activeTab === "network"
+                      ? "border-brass text-brass"
+                      : "border-transparent text-muted hover:text-paper"
+                  }`}
+                >
+                  <Radio className="w-4 h-4 text-teal" />
+                  <span>
+                    Network & Telemetry ({networkHarvest ? networkHarvest.uniqueDomains.length : "..."})
+                  </span>
+                </button>
+
+                <button
                   onClick={() => setActiveTab("diff")}
                   className={`py-3.5 px-4 border-b-2 flex items-center gap-2 transition-colors shrink-0 ${
                     activeTab === "diff"
@@ -1058,8 +1209,8 @@ function Home() {
                       : "border-transparent text-muted hover:text-paper"
                   }`}
                 >
-                  <GitCompare className="w-4 h-4 text-teal" />
-                  <span>Version Diff & Compare</span>
+                  <GitCompare className="w-4 h-4 text-amber-400" />
+                  <span>Version Diff</span>
                 </button>
 
                 <button
@@ -1075,7 +1226,7 @@ function Home() {
                 </button>
               </div>
 
-              {/* Tab 1: Overview */}
+              {/* Tab 1: Overview & Threat Intel Links */}
               {activeTab === "overview" && (
                 <div className="p-6 space-y-6">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1122,20 +1273,41 @@ function Home() {
                     </div>
                   </div>
 
-                  {/* Chrome Store Link & Quick Details */}
+                  {/* Threat Intel & Deep Links */}
                   <div className="p-4 rounded-xl border border-line bg-surface2/30 flex items-center justify-between gap-4 flex-wrap text-xs">
-                    <div>
-                      <p className="text-muted font-mono text-[11px]">Official Extension Identifier / URL:</p>
-                      <a
-                        href={meta.id.length === 32 ? `https://chromewebstore.google.com/detail/${meta.id}` : `https://addons.mozilla.org/en-US/firefox/addon/${meta.id}/`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-brass hover:underline flex items-center gap-1.5 mt-0.5 font-mono"
-                      >
-                        <span>{meta.id}</span>
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </a>
+                    <div className="space-y-1">
+                      <p className="text-muted font-mono text-[11px]">Threat Intelligence & Store Lookups:</p>
+                      <div className="flex items-center gap-3 font-mono flex-wrap">
+                        <a
+                          href={`https://www.virustotal.com/gui/search/${encodeURIComponent(meta.id)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-teal hover:underline flex items-center gap-1"
+                        >
+                          <span>VirusTotal Intel</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                        <a
+                          href={`https://crxcavator.io/report/${encodeURIComponent(meta.id)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-brass hover:underline flex items-center gap-1"
+                        >
+                          <span>CRXcavator Audit</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                        <a
+                          href={meta.id.length === 32 ? `https://chromewebstore.google.com/detail/${meta.id}` : `https://addons.mozilla.org/en-US/firefox/addon/${meta.id}/`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-paper hover:underline flex items-center gap-1"
+                        >
+                          <span>Store Listing</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
                     </div>
+
                     <div className="flex items-center gap-2">
                       <button
                         onClick={handleExportSecurityReport}
@@ -1615,10 +1787,19 @@ function Home() {
 
                   {/* Declared Permissions */}
                   <div className="space-y-3">
-                    <h4 className="font-display text-sm font-semibold text-paper flex items-center gap-2">
-                      <Shield className="w-4 h-4 text-brass" />
-                      <span>Declared Permissions & Attack Surface ({permissionsList.length})</span>
-                    </h4>
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-display text-sm font-semibold text-paper flex items-center gap-2">
+                        <Shield className="w-4 h-4 text-brass" />
+                        <span>Declared Permissions & Attack Surface ({permissionsList.length})</span>
+                      </h4>
+                      <button
+                        onClick={() => setShowEncyclopedia(true)}
+                        className="text-teal hover:underline text-xs font-mono flex items-center gap-1"
+                      >
+                        <BookOpen className="w-3 h-3" />
+                        <span>View Encyclopedia</span>
+                      </button>
+                    </div>
 
                     {permissionsList.length === 0 ? (
                       <div className="p-4 rounded-xl border border-teal/30 bg-teal/10 text-teal text-xs flex items-center gap-2">
@@ -1655,7 +1836,112 @@ function Home() {
                 </div>
               )}
 
-              {/* Tab 4: CRX Package Diff & Version Comparison */}
+              {/* Tab 4: Network Endpoints & Telemetry Harvester */}
+              {activeTab === "network" && (
+                <div className="p-6 space-y-6">
+                  <div>
+                    <h3 className="font-display text-base font-bold text-paper flex items-center gap-2">
+                      <Radio className="w-4 h-4 text-teal" />
+                      <span>Network Endpoints & External Domain Harvester</span>
+                    </h3>
+                    <p className="text-xs text-muted mt-1 leading-relaxed">
+                      Every external URL, telemetry tracker, WebSocket endpoint, and API server discovered in the extension source code.
+                    </p>
+                  </div>
+
+                  {networkHarvest && (
+                    <div className="space-y-6">
+                      {/* Top Contacted Domains */}
+                      <div className="p-4 rounded-2xl border border-line bg-surface2/40 space-y-3">
+                        <h4 className="font-display text-xs font-mono font-bold text-brass uppercase">
+                          Discovered External Domains ({networkHarvest.uniqueDomains.length})
+                        </h4>
+                        <div className="flex flex-wrap gap-1.5">
+                          {networkHarvest.domainsByCount.map((d) => (
+                            <span
+                              key={d.domain}
+                              className="px-2.5 py-1 rounded-lg border border-line bg-surface text-xs font-mono flex items-center gap-1.5"
+                            >
+                              <Globe className="w-3 h-3 text-teal shrink-0" />
+                              <span className="text-paper">{d.domain}</span>
+                              <span className="px-1.5 py-0.2 rounded-full bg-surface2 text-muted text-[10px] font-bold">
+                                {d.count}
+                              </span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Filterable Endpoints Table */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between gap-4 flex-wrap">
+                          <h4 className="font-display text-sm font-semibold text-paper">
+                            Discovered URLs & Endpoints ({filteredNetworkEndpoints.length})
+                          </h4>
+                          <div className="relative w-64">
+                            <Search className="w-3.5 h-3.5 text-muted absolute left-2.5 top-2.5" />
+                            <input
+                              type="text"
+                              value={networkFilter}
+                              onChange={(e) => setNetworkFilter(e.target.value)}
+                              placeholder="Filter URLs or domains..."
+                              className="w-full bg-surface border border-line rounded-md pl-8 pr-3 py-1.5 text-xs text-paper placeholder:text-muted/60 focus:outline-none focus:border-brass/70 font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="border border-line rounded-xl overflow-hidden">
+                          <div className="overflow-x-auto max-h-[440px]">
+                            <table className="w-full text-left text-xs font-mono">
+                              <thead className="bg-surface2/70 text-muted uppercase text-[10px] border-b border-line sticky top-0">
+                                <tr>
+                                  <th className="p-3">Protocol</th>
+                                  <th className="p-3">Endpoint URL</th>
+                                  <th className="p-3">File Location</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-line/40">
+                                {filteredNetworkEndpoints.map((ep, idx) => (
+                                  <tr key={idx} className="hover:bg-surface2/40 transition-colors">
+                                    <td className="p-3 shrink-0">
+                                      <span
+                                        className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold ${
+                                          ep.protocol === "https" || ep.protocol === "wss"
+                                            ? "bg-teal/20 text-teal"
+                                            : "bg-danger/20 text-danger"
+                                        }`}
+                                      >
+                                        {ep.protocol}
+                                      </span>
+                                    </td>
+                                    <td className="p-3 text-paper break-all select-all font-semibold max-w-md">
+                                      {ep.url}
+                                    </td>
+                                    <td className="p-3 text-muted shrink-0">
+                                      <button
+                                        onClick={() => {
+                                          setActiveTab("explorer");
+                                          handleSelectFile(ep.file, ep.line);
+                                        }}
+                                        className="text-brass hover:underline flex items-center gap-1"
+                                      >
+                                        <span>{ep.file}:{ep.line}</span>
+                                        <ChevronRight className="w-3 h-3" />
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tab 5: CRX Package Diff & Version Comparison */}
               {activeTab === "diff" && (
                 <div className="p-6 space-y-6">
                   <div>
@@ -1790,7 +2076,7 @@ function Home() {
                 </div>
               )}
 
-              {/* Tab 5: Manifest V3 Migration & Health */}
+              {/* Tab 6: Manifest V3 Migration & Health */}
               {activeTab === "mv3" && (
                 <div className="p-6 space-y-6">
                   <div className="p-5 rounded-2xl border border-line bg-surface2/50 flex items-center justify-between gap-4 flex-wrap">
@@ -2033,7 +2319,7 @@ function Home() {
                 className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface2 text-left text-paper"
               >
                 <Eye className="w-3.5 h-3.5 text-brass" />
-                <span>Go to Overview & Metadata</span>
+                <span>Go to Overview & Threat Intel</span>
               </button>
               <button
                 onClick={() => {
@@ -2057,6 +2343,16 @@ function Home() {
               </button>
               <button
                 onClick={() => {
+                  setActiveTab("network");
+                  setShowCommandPalette(false);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface2 text-left text-paper"
+              >
+                <Radio className="w-3.5 h-3.5 text-teal" />
+                <span>Network & Telemetry Harvester</span>
+              </button>
+              <button
+                onClick={() => {
                   setActiveTab("diff");
                   setShowCommandPalette(false);
                 }}
@@ -2064,6 +2360,16 @@ function Home() {
               >
                 <GitCompare className="w-3.5 h-3.5 text-amber-400" />
                 <span>Open Package Diff & Comparison Tool</span>
+              </button>
+              <button
+                onClick={() => {
+                  setShowEncyclopedia(true);
+                  setShowCommandPalette(false);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface2 text-left text-paper"
+              >
+                <BookOpen className="w-3.5 h-3.5 text-teal" />
+                <span>Browse Permissions Encyclopedia</span>
               </button>
               <button
                 onClick={() => {
@@ -2075,6 +2381,91 @@ function Home() {
                 <FileDown className="w-3.5 h-3.5 text-teal" />
                 <span>Export Security Audit Report (.md)</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Permissions Encyclopedia Modal */}
+      {showEncyclopedia && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/80 backdrop-blur-sm"
+          onClick={() => setShowEncyclopedia(false)}
+        >
+          <div
+            className="bg-surface border border-line rounded-2xl max-w-3xl w-full p-6 shadow-2xl relative max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-4 border-b border-line">
+              <div>
+                <h3 className="font-display text-lg font-bold text-paper flex items-center gap-2">
+                  <BookOpen className="w-5 h-5 text-teal" />
+                  <span>Browser Permissions & Threat Model Encyclopedia</span>
+                </h3>
+                <p className="text-xs text-muted mt-0.5">Comprehensive audit reference for Chrome, Edge, and Firefox API permissions.</p>
+              </div>
+              <button onClick={() => setShowEncyclopedia(false)} className="text-muted hover:text-paper">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Filter controls */}
+            <div className="py-3 border-b border-line flex flex-col sm:flex-row gap-2.5 items-center justify-between">
+              <div className="relative flex-1 w-full">
+                <Search className="w-3.5 h-3.5 text-muted absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  value={encyclopediaSearch}
+                  onChange={(e) => setEncyclopediaSearch(e.target.value)}
+                  placeholder="Search permission or capability..."
+                  className="w-full bg-surface2 border border-line rounded-md pl-8 pr-3 py-1.5 text-xs text-paper placeholder:text-muted/60 focus:outline-none focus:border-brass/70 font-mono"
+                />
+              </div>
+
+              <div className="flex items-center gap-1 text-[11px] font-mono text-muted overflow-x-auto w-full sm:w-auto">
+                {["All", "Network", "Storage & Data", "DOM & Tabs", "System & Native", "Privacy & Security"].map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setEncyclopediaCategory(cat)}
+                    className={`px-2 py-1 rounded transition-colors whitespace-nowrap ${
+                      encyclopediaCategory === cat ? "bg-brass/20 text-brass border border-brass/40" : "hover:text-paper bg-surface2"
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* List */}
+            <div className="flex-1 overflow-y-auto py-3 space-y-2.5 pr-1">
+              {filteredEncyclopedia.map((doc) => (
+                <div key={doc.name} className="p-3.5 rounded-xl border border-line bg-surface2/40 space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono font-bold text-paper text-xs">{doc.name}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-mono text-muted uppercase bg-surface px-1.5 py-0.5 rounded border border-line">
+                        {doc.category}
+                      </span>
+                      <span
+                        className={`text-[10px] font-mono uppercase font-bold px-1.5 py-0.5 rounded ${
+                          doc.level === "high"
+                            ? "bg-danger/20 text-danger border border-danger/30"
+                            : doc.level === "medium"
+                            ? "bg-amber-400/20 text-amber-400 border border-amber-400/30"
+                            : "bg-teal/20 text-teal border border-teal/30"
+                        }`}
+                      >
+                        {doc.level}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted leading-relaxed">{doc.summary}</p>
+                  <p className="text-[11px] text-danger/80 font-mono pt-1">
+                    <strong>Threat Vector:</strong> {doc.threatModel}
+                  </p>
+                </div>
+              ))}
             </div>
           </div>
         </div>

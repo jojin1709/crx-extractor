@@ -59,9 +59,14 @@ Paste any Chrome Web Store link, Firefox Add-on URL, or 32-character extension I
 ## Key Features
 
 - **⚡ Instant Binary Unpacking:** Converts signed `.crx`, `.xpi`, and `.zip` packages to clean source code in milliseconds.
+- **📡 Network Endpoints & Telemetry Harvester:** Automatically extracts all HTTP, HTTPS, and WebSocket (WSS) URLs, domains, and third-party trackers across every script, mapped to exact source line numbers.
+- **📚 Interactive Permissions Risk Encyclopedia:** Searchable permission knowledgebase covering 60+ Chrome/Firefox permissions with detailed danger ratings, capability descriptions, and threat models.
+- **🛡️ VirusTotal & Threat Intel Direct Links:** One-click direct intelligence pivots to VirusTotal and CRXcavator for hash-level malware analysis.
 - **✨ 1-Click Code Beautifier / De-Minifier:** Automatically un-minifies and formats compressed single-line JavaScript, JSON, CSS, and HTML files.
 - **⚖️ Version Diff & Comparison Engine:** Drag and drop two versions of an extension to visualize newly requested permissions, added/removed files, and line-by-line code diffs.
 - **🛡️ Automated Security Audit & Health Score:** Generates an overall security grade (`A+` to `F`) and scans for dangerous code patterns and permissions.
+- **🕒 Recent Lookups & Audit History:** Instant local history with 1-click package reload and clear history controls.
+- **📱 PWA & Standalone App Support:** Install GetCRX as a standalone desktop or mobile Progressive Web App with offline caching support.
 - **🔑 Hardcoded Secrets & Token Detector:** Scans files for exposed AWS keys, OpenAI tokens, Google Cloud API keys, GitHub tokens, Slack tokens, Stripe keys, and private keys.
 - **🎛️ Custom Security Rule Scanner:** Enter custom regular expressions to search for proprietary internal API endpoints, company auth tokens, or specific code signatures across all files.
 - **💻 Syntax-Highlighted Code Viewer:** Tokenized syntax highlighting for JavaScript, TypeScript, JSON, HTML, and CSS with line numbers and jump-to-line highlighting.

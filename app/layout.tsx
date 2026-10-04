@@ -41,6 +41,7 @@ export const metadata: Metadata = {
     shortcut: "/favicon.svg",
     apple: "/favicon.svg"
   },
+  manifest: "/site.webmanifest",
   openGraph: {
     title: "GetCRX — Chrome Extension Unpacker & Security Auditor",
     description:
