@@ -1,4 +1,39 @@
+# GetCRX Robots.txt
+# High-Performance Browser Extension Extractor & Security Inspector
+# https://getcrx.vercel.app
+
 User-agent: *
 Allow: /
+Allow: /sitemap.xml
+Allow: /sitemap.xsl
+Allow: /favicon.svg
+Disallow: /api/extract
+Disallow: /api/meta
 
+# Search Engine Crawlers
+User-agent: Googlebot
+Allow: /
+
+User-agent: Googlebot-Image
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: DuckDuckBot
+Allow: /
+
+User-agent: Applebot
+Allow: /
+
+User-agent: YandexBot
+Allow: /
+
+User-agent: Baiduspider
+Allow: /
+
+# Host
+Host: https://getcrx.vercel.app
+
+# Sitemaps
 Sitemap: https://getcrx.vercel.app/sitemap.xml
