@@ -21,9 +21,41 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Unpacked — pull the source of any Chrome extension",
+  title: "GetCRX — Chrome Extension Unpacker & Security Auditor",
   description:
-    "Paste a Chrome Web Store link or extension id. Get the raw, unpacked source as a zip. No login, no install, nothing stored."
+    "Extract, inspect, and analyze the raw source code of any Chrome Web Store extension in real-time. Features live code viewer, manifest V3 migration check, secrets scanner, and security audit.",
+  keywords: [
+    "chrome extension unpacker",
+    "crx extractor",
+    "download crx",
+    "chrome web store downloader",
+    "manifest v3 analyzer",
+    "extension security audit",
+    "crx to zip",
+    "extension source code viewer"
+  ],
+  authors: [{ name: "JOJIN JOHN", url: "https://getcrx.vercel.app" }],
+  creator: "JOJIN JOHN",
+  icons: {
+    icon: "/favicon.svg",
+    shortcut: "/favicon.svg",
+    apple: "/favicon.svg"
+  },
+  openGraph: {
+    title: "GetCRX — Chrome Extension Unpacker & Security Auditor",
+    description:
+      "Instant in-browser Chrome extension source code extractor, secret detector, permission auditor, and Manifest V3 inspector.",
+    url: "https://getcrx.vercel.app",
+    siteName: "GetCRX",
+    type: "website",
+    locale: "en_US"
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "GetCRX — Chrome Extension Unpacker & Security Auditor",
+    description:
+      "Instant in-browser Chrome extension source code extractor, secret detector, permission auditor, and Manifest V3 inspector."
+  }
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
