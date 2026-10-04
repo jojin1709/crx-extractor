@@ -1279,12 +1279,12 @@ function Home() {
                       <p className="text-muted font-mono text-[11px]">Threat Intelligence & Store Lookups:</p>
                       <div className="flex items-center gap-3 font-mono flex-wrap">
                         <a
-                          href={`https://www.virustotal.com/gui/search/${encodeURIComponent(meta.id)}`}
+                          href={`https://transparencyreport.google.com/safe-browsing/search?url=${encodeURIComponent(meta.id.length === 32 ? `https://chromewebstore.google.com/detail/${meta.id}` : `https://addons.mozilla.org/en-US/firefox/addon/${meta.id}/`)}`}
                           target="_blank"
                           rel="noreferrer"
                           className="text-teal hover:underline flex items-center gap-1"
                         >
-                          <span>VirusTotal Intel</span>
+                          <span>Google Safe Browsing</span>
                           <ExternalLink className="w-3 h-3" />
                         </a>
                         {meta.id.length === 32 ? (
