@@ -382,11 +382,7 @@ function Home() {
     }
 
     try {
-      const res = await fetch("/api/meta", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ q: id })
-      });
+      const res = await fetch(`/api/meta?q=${encodeURIComponent(id)}`);
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
@@ -423,11 +419,7 @@ function Home() {
     setUnpackError(null);
 
     try {
-      const res = await fetch("/api/extract", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ q: id })
-      });
+      const res = await fetch(`/api/extract?q=${encodeURIComponent(id)}`);
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
@@ -536,11 +528,7 @@ function Home() {
     setErrorMsg(null);
 
     try {
-      const res = await fetch("/api/extract", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ q: meta.id })
-      });
+      const res = await fetch(`/api/extract?q=${encodeURIComponent(meta.id)}`);
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
