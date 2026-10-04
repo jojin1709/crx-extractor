@@ -1,0 +1,52 @@
+import { NextRequest, NextResponse } from "next/server";
+import * as cheerio from "cheerio";
+import { extractExtensionId } from "@/lib/crx";
+
+export const runtime = "nodejs";
+
+export async function GET(req: NextRequest) {
+  const raw = req.nextUrl.searchParams.get("q") || "";
+  const id = extractExtensionId(raw);
+
+  if (!id) {
+    return NextResponse.json(
+      { error: "Couldn't find a valid extension id in that input." },
+      { status: 400 }
+    );
+  }
+
+  const storeUrl = `https://chromewebstore.google.com/detail/${id}`;
+
+  try {
+    const res = await fetch(storeUrl, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; UnpackedBot/1.0)" }
+    });
+
+    if (!res.ok) {
+      return NextResponse.json({ id, name: null, icon: null, notFound: true });
+    }
+
+    const html = await res.text();
+    const $ = cheerio.load(html);
+
+    const name =
+      $('meta[itemprop="name"]').attr("content") ||
+      $('meta[property="og:title"]').attr("content") ||
+      $("title").text().split("-")[0]?.trim() ||
+      null;
+
+    const icon =
+      $('meta[itemprop="image"]').attr("content") ||
+      $('meta[property="og:image"]').attr("content") ||
+      null;
+
+    const description =
+      $('meta[name="description"]').attr("content") ||
+      $('meta[property="og:description"]').attr("content") ||
+      null;
+
+    return NextResponse.json({ id, name, icon, description, notFound: false });
+  } catch {
+    return NextResponse.json({ id, name: null, icon: null, notFound: true });
+  }
+}
