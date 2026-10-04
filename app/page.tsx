@@ -7,8 +7,7 @@ import {
   extractExtensionId,
   buildCrxDownloadUrl,
   stripCrxHeaderUint8Array,
-  classifyPermission,
-  PermissionDetail
+  classifyPermission
 } from "@/lib/crx";
 import {
   ShieldAlert,
@@ -17,7 +16,6 @@ import {
   FileCode,
   FileText,
   Folder,
-  FolderOpen,
   Download,
   Copy,
   Check,
@@ -28,10 +26,12 @@ import {
   FileArchive,
   Terminal,
   UploadCloud,
-  ChevronRight,
   Eye,
   File,
-  Package
+  Package,
+  HelpCircle,
+  X,
+  Info
 } from "lucide-react";
 
 type Meta = {
@@ -69,23 +69,28 @@ interface ManifestData {
   }>;
   action?: { default_popup?: string; default_title?: string };
   browser_action?: { default_popup?: string; default_title?: string };
-  web_accessible_resources?: any;
 }
 
 const POPULAR_EXTENSIONS = [
-  { name: "uBlock Origin", id: "cjpalhdlnbpafiamejdnhcphjbkeiagm" },
-  { name: "Bitwarden", id: "nngceckbapebfimnlniiiahkandclblb" },
+  { name: "uBlock Lite", id: "ddkjiahejlhfcafbddmgiahcphecmpfh" },
   { name: "Dark Reader", id: "eimadpbcbfnmbkopoojfekhnkhdbieeh" },
   { name: "MetaMask", id: "nkbihfbeogaeaoehlefnkodbefgpgknn" },
   { name: "React DevTools", id: "fmkadmapgofadopljbjfkapdkoienihi" },
-  { name: "Wappalyzer", id: "gppongmhjkpfnbhagpmjfkannfbllamg" }
+  { name: "Wappalyzer", id: "gppongmhjkpfnbhagpmjfkannfbllamg" },
+  { name: "Bitwarden", id: "nngceckbapebfimnlniiiahkandclblb" }
 ];
 
 type ActiveTab = "overview" | "explorer" | "security";
 
 export default function HomeWrapper() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-ink flex items-center justify-center text-muted">Loading GetCRX...</div>}>
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-ink flex items-center justify-center text-muted">
+          Loading GetCRX...
+        </div>
+      }
+    >
       <Home />
     </Suspense>
   );
@@ -99,17 +104,19 @@ function Home() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("overview");
   const [copiedCli, setCopiedCli] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [showIdGuide, setShowIdGuide] = useState(false);
 
   // Archive inspection state
   const [zipInstance, setZipInstance] = useState<JSZip | null>(null);
   const [zipEntries, setZipEntries] = useState<ZipEntryInfo[]>([]);
+  const [isUnpacking, setIsUnpacking] = useState(false);
+  const [unpackError, setUnpackError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [fileImageUrl, setFileImageUrl] = useState<string | null>(null);
   const [manifestData, setManifestData] = useState<ManifestData | null>(null);
   const [copiedFile, setCopiedFile] = useState(false);
   const [fileSearch, setFileSearch] = useState("");
-  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({ "": true });
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -137,6 +144,8 @@ function Home() {
     setMeta(null);
     setZipInstance(null);
     setZipEntries([]);
+    setIsUnpacking(true);
+    setUnpackError(null);
     setSelectedFile(null);
     setFileContent(null);
     setFileImageUrl(null);
@@ -150,16 +159,18 @@ function Home() {
       if (!res.ok) {
         setErrorMsg(data.error ?? "Lookup failed. Verify the extension ID.");
         setStatus("error");
+        setIsUnpacking(false);
         return;
       }
 
       setMeta(data);
       setStatus("found");
-      // Silently prefetch & load zip in browser for instant inspection
+      // Fetch and unpack zip in browser for instant inspection
       loadZipData(id);
     } catch {
       setErrorMsg("Failed to reach lookup service.");
       setStatus("error");
+      setIsUnpacking(false);
     }
   }
 
@@ -170,6 +181,9 @@ function Home() {
   }
 
   async function loadZipData(id: string) {
+    setIsUnpacking(true);
+    setUnpackError(null);
+
     try {
       const res = await fetch("/api/extract", {
         method: "POST",
@@ -177,7 +191,12 @@ function Home() {
         body: JSON.stringify({ q: id })
       });
 
-      if (!res.ok) return;
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        setUnpackError(errData.error || "Could not unpack source files.");
+        setIsUnpacking(false);
+        return;
+      }
 
       const blob = await res.blob();
       const arrayBuffer = await blob.arrayBuffer();
@@ -194,7 +213,6 @@ function Home() {
         });
       });
 
-      // Sort files alphabetically with folders first
       entries.sort((a, b) => {
         if (a.isDir && !b.isDir) return -1;
         if (!a.isDir && b.isDir) return 1;
@@ -210,12 +228,15 @@ function Home() {
         try {
           const parsed = JSON.parse(text);
           setManifestData(parsed);
-        } catch {
-          // invalid json
-        }
+          if (parsed.name && (!meta?.name || meta.name === "Chrome Web Store")) {
+            setMeta((prev) => (prev ? { ...prev, name: parsed.name } : prev));
+          }
+        } catch {}
       }
     } catch {
-      // ignore client-side prefetch error
+      setUnpackError("Failed to unpack archive.");
+    } finally {
+      setIsUnpacking(false);
     }
   }
 
@@ -281,6 +302,7 @@ function Home() {
   async function processLocalFile(file: File) {
     setStatus("extracting");
     setErrorMsg(null);
+    setIsUnpacking(true);
     setMeta({
       id: file.name.replace(/\.[^/.]+$/, ""),
       name: file.name,
@@ -331,6 +353,8 @@ function Home() {
     } catch (err: any) {
       setErrorMsg(err.message || "Failed to parse local file. Ensure it is a valid .crx or .zip file.");
       setStatus("error");
+    } finally {
+      setIsUnpacking(false);
     }
   }
 
@@ -403,7 +427,6 @@ function Home() {
     inputRef.current?.focus();
   }
 
-  // Permissions classification
   const permissionsList = useMemo(() => {
     if (!manifestData) return [];
     const regular = manifestData.permissions || [];
@@ -414,7 +437,6 @@ function Home() {
   }, [manifestData]);
 
   const highRiskCount = permissionsList.filter((p) => p.level === "high").length;
-  const mediumRiskCount = permissionsList.filter((p) => p.level === "medium").length;
 
   const filteredEntries = useMemo(() => {
     if (!fileSearch.trim()) return zipEntries;
@@ -452,21 +474,24 @@ function Home() {
           <div>
             <div className="flex items-center gap-2">
               <span className="font-display text-xl font-bold tracking-tight text-paper">GetCRX</span>
-              <span className="text-[10px] font-mono uppercase bg-brass/20 text-brass px-1.5 py-0.5 rounded border border-brass/30">v2.0</span>
+              <span className="text-[10px] font-mono uppercase bg-brass/20 text-brass px-1.5 py-0.5 rounded border border-brass/30">
+                v2.0
+              </span>
             </div>
             <p className="text-[11px] text-muted tracking-tight">Chrome Extension Unpacker & Auditor</p>
           </div>
         </div>
 
         <div className="flex items-center gap-4 text-xs">
-          <a
-            href="#how"
-            className="focus-ring rounded text-muted transition-colors hover:text-paper hidden sm:inline-block"
+          <button
+            onClick={() => setShowIdGuide(true)}
+            className="focus-ring rounded text-muted transition-colors hover:text-brass flex items-center gap-1.5"
           >
-            How it works
-          </a>
+            <HelpCircle className="w-3.5 h-3.5 text-brass" />
+            <span>How to find Extension ID</span>
+          </button>
           <span className="text-line hidden sm:inline-block">|</span>
-          <span className="font-mono text-muted text-[11px]">
+          <span className="font-mono text-muted text-[11px] hidden sm:inline-block">
             Dev by <span className="text-brass font-medium">JOJIN JOHN</span>
           </span>
         </div>
@@ -502,7 +527,7 @@ function Home() {
                 ref={inputRef}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Paste Chrome Web Store URL, 32-char ID, or drop .crx file"
+                placeholder="Paste Chrome Web Store link, 32-char ID, or drop .crx file"
                 disabled={status === "looking" || status === "extracting"}
                 className="w-full bg-transparent pl-10 pr-4 py-3 font-mono text-[13px] text-paper placeholder:text-muted/60 focus:outline-none"
               />
@@ -539,6 +564,13 @@ function Home() {
               {ext.name}
             </button>
           ))}
+          <button
+            onClick={() => setShowIdGuide(true)}
+            className="px-2 py-1 text-brass text-[11px] hover:underline flex items-center gap-1"
+          >
+            <HelpCircle className="w-3 h-3" />
+            <span>Where is ID?</span>
+          </button>
         </div>
 
         {/* Status Messages */}
@@ -659,7 +691,9 @@ function Home() {
                   onClick={() => {
                     setActiveTab("explorer");
                     if (!selectedFile && zipEntries.length > 0) {
-                      const firstCode = zipEntries.find((e) => !e.isDir && e.name.endsWith(".json")) || zipEntries.find((e) => !e.isDir);
+                      const firstCode =
+                        zipEntries.find((e) => !e.isDir && e.name.endsWith(".json")) ||
+                        zipEntries.find((e) => !e.isDir);
                       if (firstCode) handleSelectFile(firstCode.path);
                     }
                   }}
@@ -670,7 +704,9 @@ function Home() {
                   }`}
                 >
                   <FileCode className="w-4 h-4" />
-                  <span>Code Explorer ({zipEntries.filter((e) => !e.isDir).length} files)</span>
+                  <span>
+                    Code Explorer ({isUnpacking ? "Loading..." : `${zipEntries.filter((e) => !e.isDir).length} files`})
+                  </span>
                 </button>
 
                 <button
@@ -696,24 +732,26 @@ function Home() {
                 <div className="p-6 space-y-6">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="p-4 rounded-xl border border-line bg-surface2/50">
-                      <p className="text-[11px] font-mono uppercase text-muted">Manifest Version</p>
+                      <p className="text-[11px] font-mono uppercase text-muted">Manifest Architecture</p>
                       <p className="text-xl font-bold font-display text-paper mt-1">
-                        {manifestData?.manifest_version ? `Manifest V${manifestData.manifest_version}` : "Unknown"}
+                        {manifestData?.manifest_version ? `Manifest V${manifestData.manifest_version}` : isUnpacking ? "Analyzing..." : "MV3 Active"}
                       </p>
                       <p className="text-xs text-muted mt-1">
                         {manifestData?.manifest_version === 3
                           ? "Modern MV3 architecture (Service Worker)"
-                          : "Legacy MV2 architecture"}
+                          : "Standard Chrome extension format"}
                       </p>
                     </div>
 
                     <div className="p-4 rounded-xl border border-line bg-surface2/50">
-                      <p className="text-[11px] font-mono uppercase text-muted">Total Files</p>
+                      <p className="text-[11px] font-mono uppercase text-muted">Unpacked Files</p>
                       <p className="text-xl font-bold font-display text-paper mt-1">
-                        {zipEntries.filter((e) => !e.isDir).length} files
+                        {isUnpacking ? "Extracting..." : `${zipEntries.filter((e) => !e.isDir).length} files`}
                       </p>
                       <p className="text-xs text-muted mt-1">
-                        {(zipEntries.reduce((acc, f) => acc + f.size, 0) / 1024).toFixed(1)} KB unpacked
+                        {isUnpacking
+                          ? "Processing package..."
+                          : `${(zipEntries.reduce((acc, f) => acc + f.size, 0) / 1024).toFixed(1)} KB unpacked source`}
                       </p>
                     </div>
 
@@ -721,7 +759,7 @@ function Home() {
                       <p className="text-[11px] font-mono uppercase text-muted">Security Profile</p>
                       <div className="flex items-center gap-2 mt-1">
                         <span className="text-xl font-bold font-display text-paper">
-                          {permissionsList.length} Permissions
+                          {isUnpacking ? "Scanning..." : `${permissionsList.length} Permissions`}
                         </span>
                       </div>
                       <p className="text-xs text-muted mt-1">
@@ -749,7 +787,13 @@ function Home() {
                       </a>
                     </div>
                     <button
-                      onClick={() => setActiveTab("explorer")}
+                      onClick={() => {
+                        setActiveTab("explorer");
+                        if (!selectedFile && zipEntries.length > 0) {
+                          const firstCode = zipEntries.find((e) => !e.isDir);
+                          if (firstCode) handleSelectFile(firstCode.path);
+                        }
+                      }}
                       className="px-4 py-2 rounded-lg bg-surface border border-line text-paper hover:bg-surface2 transition-colors flex items-center gap-1.5"
                     >
                       <Code className="w-3.5 h-3.5 text-brass" />
@@ -778,8 +822,26 @@ function Home() {
                     </div>
 
                     <div className="flex-1 overflow-y-auto max-h-[520px] p-2 space-y-0.5">
-                      {filteredEntries.length === 0 ? (
-                        <p className="p-4 text-xs text-muted text-center">No files found.</p>
+                      {isUnpacking ? (
+                        <div className="p-8 text-center text-xs text-muted flex flex-col items-center justify-center gap-2">
+                          <span className="w-5 h-5 border-2 border-brass border-t-transparent rounded-full animate-spin" />
+                          <span>Unpacking extension source...</span>
+                        </div>
+                      ) : unpackError ? (
+                        <div className="p-4 text-xs text-danger text-center">
+                          <AlertTriangle className="w-5 h-5 mx-auto mb-2 text-danger" />
+                          <p>{unpackError}</p>
+                          <button
+                            onClick={() => loadZipData(meta.id)}
+                            className="mt-2 text-brass underline text-[11px]"
+                          >
+                            Retry extraction
+                          </button>
+                        </div>
+                      ) : filteredEntries.length === 0 ? (
+                        <div className="p-8 text-center text-xs text-muted">
+                          <p>No files found.</p>
+                        </div>
                       ) : (
                         filteredEntries.map((entry) => {
                           const isSelected = selectedFile === entry.path;
@@ -860,7 +922,11 @@ function Home() {
                           {fileImageUrl ? (
                             <div className="flex flex-col items-center justify-center p-8">
                               {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={fileImageUrl} alt="" className="max-w-[200px] max-h-[200px] rounded border border-line bg-surface p-2 object-contain" />
+                              <img
+                                src={fileImageUrl}
+                                alt=""
+                                className="max-w-[200px] max-h-[200px] rounded border border-line bg-surface p-2 object-contain"
+                              />
                               <p className="mt-3 text-xs text-muted">{selectedFile}</p>
                             </div>
                           ) : (
@@ -972,6 +1038,88 @@ function Home() {
         )}
       </section>
 
+      {/* Visual Reference Guide: Where to find Extension ID */}
+      <section className="mx-auto max-w-5xl border-t border-line px-6 py-14">
+        <div className="text-center max-w-xl mx-auto mb-8">
+          <div className="inline-flex items-center gap-1.5 text-xs text-brass font-mono mb-2">
+            <Info className="w-4 h-4" />
+            <span>Visual Reference</span>
+          </div>
+          <h2 className="font-display text-2xl font-bold tracking-tight text-paper">
+            Where to find any Extension ID
+          </h2>
+          <p className="text-xs text-muted mt-1">
+            Every Chrome extension has a unique 32-character string of lowercase letters (a–p).
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Reference Card 1 */}
+          <div className="p-6 rounded-2xl border border-line bg-surface flex flex-col justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-xs font-mono text-brass font-bold mb-3">
+                <span className="w-5 h-5 rounded-full bg-brass/20 flex items-center justify-center text-[11px]">1</span>
+                <span>From Chrome Web Store URL</span>
+              </div>
+              <p className="text-xs text-muted leading-relaxed mb-4">
+                Open any extension page on the Chrome Web Store. The last 32 letters in the address bar is the ID.
+              </p>
+
+              {/* Graphic Mockup */}
+              <div className="p-3 rounded-xl bg-ink border border-line font-mono text-xs overflow-x-auto">
+                <div className="flex items-center gap-1.5 pb-2 mb-2 border-b border-line/40 text-[10px] text-muted">
+                  <span className="w-2 h-2 rounded-full bg-danger/80" />
+                  <span className="w-2 h-2 rounded-full bg-amber-400/80" />
+                  <span className="w-2 h-2 rounded-full bg-teal/80" />
+                  <span className="ml-2 truncate text-muted/60">chromewebstore.google.com</span>
+                </div>
+                <div className="text-[11px] leading-relaxed">
+                  <span className="text-muted/60">https://chromewebstore.google.com/detail/name/</span>
+                  <span className="text-brass font-bold bg-brass/20 px-1 rounded border border-brass/40">
+                    ddkjiahejlhfcafbddmgiahcphecmpfh
+                  </span>
+                </div>
+              </div>
+            </div>
+            <p className="text-[11px] text-teal mt-4 flex items-center gap-1">
+              <Check className="w-3.5 h-3.5" />
+              <span>Tip: You can also paste the entire URL directly into GetCRX!</span>
+            </p>
+          </div>
+
+          {/* Reference Card 2 */}
+          <div className="p-6 rounded-2xl border border-line bg-surface flex flex-col justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-xs font-mono text-brass font-bold mb-3">
+                <span className="w-5 h-5 rounded-full bg-brass/20 flex items-center justify-center text-[11px]">2</span>
+                <span>From chrome://extensions page</span>
+              </div>
+              <p className="text-xs text-muted leading-relaxed mb-4">
+                Open <code className="text-brass bg-surface2 px-1 py-0.5 rounded">chrome://extensions</code> in Chrome,
+                enable <strong>Developer mode</strong> in the top right corner, and the ID appears under each extension.
+              </p>
+
+              {/* Graphic Mockup */}
+              <div className="p-3 rounded-xl bg-ink border border-line font-mono text-xs">
+                <div className="flex items-center justify-between pb-2 mb-2 border-b border-line/40 text-[10px] text-muted">
+                  <span className="text-paper font-medium">uBlock Origin Lite</span>
+                  <span className="text-teal text-[10px] bg-teal/10 px-1.5 py-0.5 rounded border border-teal/30">
+                    Developer mode ON
+                  </span>
+                </div>
+                <div className="text-[11px]">
+                  <span className="text-muted/60">ID: </span>
+                  <span className="text-brass font-bold">ddkjiahejlhfcafbddmgiahcphecmpfh</span>
+                </div>
+              </div>
+            </div>
+            <p className="text-[11px] text-muted/80 mt-4">
+              Copy that ID and paste it above to extract the extension.
+            </p>
+          </div>
+        </div>
+      </section>
+
       {/* How it works Section */}
       <section id="how" className="mx-auto max-w-5xl border-t border-line px-6 py-16">
         <h2 className="font-display text-2xl font-bold tracking-tight">How it works</h2>
@@ -1008,6 +1156,57 @@ function Home() {
           </p>
         </div>
       </footer>
+
+      {/* Modal Dialog for ID Guide */}
+      {showIdGuide && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/80 backdrop-blur-sm"
+          onClick={() => setShowIdGuide(false)}
+        >
+          <div
+            className="bg-surface border border-line rounded-2xl max-w-lg w-full p-6 shadow-2xl relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setShowIdGuide(false)}
+              className="absolute top-4 right-4 text-muted hover:text-paper"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <h3 className="font-display text-lg font-bold text-paper mb-2">How to Find Chrome Extension ID</h3>
+            <p className="text-xs text-muted mb-4 leading-relaxed">
+              Every Chrome extension has a 32-character ID. You can find it using either method:
+            </p>
+
+            <div className="space-y-4 text-xs">
+              <div className="p-3.5 rounded-xl border border-line bg-surface2">
+                <p className="font-semibold text-brass font-mono">Method 1: From Store URL (Easiest)</p>
+                <p className="text-muted mt-1 leading-relaxed">
+                  Look at the Chrome Web Store URL. The 32 letters at the end is the ID:
+                </p>
+                <code className="block mt-2 p-2 rounded bg-ink text-paper font-mono text-[11px] break-all border border-line">
+                  chromewebstore.google.com/detail/name/<span className="text-brass font-bold">cjpalhdlnbpafiamejdnhcphjbkeiagm</span>
+                </code>
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-line bg-surface2">
+                <p className="font-semibold text-brass font-mono">Method 2: From Installed Extensions</p>
+                <p className="text-muted mt-1 leading-relaxed">
+                  Go to <span className="text-paper font-mono">chrome://extensions</span>, enable Developer mode in top
+                  right, and copy the 32-character ID listed under the extension.
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowIdGuide(false)}
+              className="mt-6 w-full py-2.5 rounded-lg bg-brass text-ink font-semibold text-xs hover:bg-brassDim transition-colors"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

@@ -1,9 +1,61 @@
 import { NextRequest, NextResponse } from "next/server";
 import AdmZip from "adm-zip";
-import { buildCrxDownloadUrl, extractExtensionId, stripCrxHeader } from "@/lib/crx";
+import { extractExtensionId, stripCrxHeader } from "@/lib/crx";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+const CHROME_VERSIONS = [
+  "131.0.6778.86",
+  "128.0.6613.120",
+  "120.0.6099.109",
+  "114.0.5735.199",
+  "99.0.4844.84",
+  "32.0.1700.107"
+];
+
+async function downloadCrxBuffer(id: string): Promise<Buffer | null> {
+  const userAgent =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36";
+
+  for (const version of CHROME_VERSIONS) {
+    const url = `https://clients2.google.com/service/update2/crx?response=redirect&prodversion=${version}&acceptformat=crx2,crx3&x=id%3D${id}%26installsource%3Dondemand%26uc`;
+    try {
+      const res = await fetch(url, { headers: { "User-Agent": userAgent } });
+      if (res.ok) {
+        const arrayBuf = await res.arrayBuffer();
+        const buf = Buffer.from(arrayBuf);
+        if (buf.length > 500) {
+          return buf;
+        }
+      }
+    } catch {
+      // try next version
+    }
+  }
+
+  // Edge store fallback
+  const edgeUrl = `https://edge.microsoft.com/extensionwebstorebase/v1/crx?response=redirect&prod=chromiumcrx&prodchannel=&x=id%3D${id}%26installsource%3Dondemand%26uc`;
+  try {
+    const edgeRes = await fetch(edgeUrl, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Edg/128.0.0.0"
+      }
+    });
+    if (edgeRes.ok) {
+      const arrayBuf = await edgeRes.arrayBuffer();
+      const buf = Buffer.from(arrayBuf);
+      if (buf.length > 500) {
+        return buf;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
 
 export async function POST(req: NextRequest) {
   let body: { q?: string };
@@ -16,39 +68,19 @@ export async function POST(req: NextRequest) {
   const id = extractExtensionId(body.q ?? "");
   if (!id) {
     return NextResponse.json(
-      { error: "Couldn't find a valid extension id in that input." },
+      { error: "Couldn't find a valid 32-character extension ID in that input." },
       { status: 400 }
     );
   }
 
-  const crxUrl = buildCrxDownloadUrl(id);
-
-  let crxBuffer: Buffer;
-  try {
-    const res = await fetch(crxUrl, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; UnpackedBot/1.0)" }
-    });
-
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: `Google's update service returned ${res.status}. The extension id may be wrong, or the extension may no longer be published.` },
-        { status: 502 }
-      );
-    }
-
-    const arrayBuffer = await res.arrayBuffer();
-    crxBuffer = Buffer.from(arrayBuffer);
-  } catch {
+  const crxBuffer = await downloadCrxBuffer(id);
+  if (!crxBuffer) {
     return NextResponse.json(
-      { error: "Couldn't reach Google's extension update service. Try again in a moment." },
-      { status: 502 }
-    );
-  }
-
-  if (crxBuffer.length < 16) {
-    return NextResponse.json(
-      { error: "Received an unexpectedly small file — this id likely doesn't correspond to a published extension." },
-      { status: 502 }
+      {
+        error:
+          "Google's update service returned 204/404 for this ID. Make sure the 32-character ID is correct and the extension is currently published on the Chrome Web Store."
+      },
+      { status: 404 }
     );
   }
 
@@ -68,7 +100,7 @@ export async function POST(req: NextRequest) {
     outZip = zip.toBuffer();
   } catch {
     return NextResponse.json(
-      { error: "The downloaded package wasn't a valid archive. Double check the extension id." },
+      { error: "The downloaded package was not a valid archive. Double check the extension ID." },
       { status: 500 }
     );
   }
