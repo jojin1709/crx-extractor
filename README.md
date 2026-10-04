@@ -59,14 +59,30 @@ Paste any Chrome Web Store link, Firefox Add-on URL, or 32-character extension I
 ## Key Features
 
 - **⚡ Instant Binary Unpacking:** Converts signed `.crx`, `.xpi`, and `.zip` packages to clean source code in milliseconds.
+- **🧪 CSP (Content Security Policy) Deep Evaluator:** Parses MV2 string and MV3 dictionary CSPs, evaluating `script-src`, `connect-src`, and flagging `'unsafe-eval'`, `'unsafe-inline'`, and wildcards.
+- **🔐 Cryptographic Hashes & Fingerprints:** Native Web Crypto SHA-256, SHA-1, and MD5 calculations with 1-click copy for VirusTotal and IOC threat reports.
+- **🎯 Content Scripts & URL Match Pattern Map:** Detailed breakdown of all injected content scripts, URL matches, `run_at` timing, and frame isolation.
+- **🌐 Web Accessible Resources (WAR) Attack Surface:** Scans accessible assets and highlights wildcard exposure risks and DOM fingerprinting vectors.
 - **📡 Network Endpoints & Telemetry Harvester:** Automatically extracts all HTTP, HTTPS, and WebSocket (WSS) URLs, domains, and third-party trackers across every script, mapped to exact source line numbers.
-- **📚 Interactive Permissions Risk Encyclopedia:** Searchable permission knowledgebase covering 60+ Chrome/Firefox permissions with detailed danger ratings, capability descriptions, and threat models.
+- **🖼️ Visual Asset & Icon Gallery:** Dedicated preview grid for all extension icons (`16x16`, `32x32`, `48x48`, `128x128`), SVG vectors, and UI images with 1-click download.
+- **📊 Bundle Composition & Size Analytics:** Visual file type distribution bar (JS, JSON, HTML, CSS, Images) + ranking of the Top 5 Largest Files.
+- **🏢 Enterprise Policy Generator:** Generates ready-to-use Google Chrome & Edge management policy blocks in JSON and Windows Registry (`.reg`) format.
+- **📦 Third-Party Library & Framework Detector (SCA):** Detects bundled packages (React, Vue, jQuery, Lodash, Sentry, Axios, Firebase, Tailwind, Webpack, WXT, Plasmo).
+- **🛡️ 1-Click Permission Stripper ("Hardened Privacy Mode"):** Automatically strips `<all_urls>`, `webRequestBlocking`, `cookies`, `nativeMessaging`, and `debugger` to generate a hardened `.zip`.
+- **🎲 Script Obfuscation & Shannon Entropy Detector:** Measures entropy (bits/char) and detects JSFuck, heavy hex arrays, and packed eval blobs.
+- **🎙️ Hardware & Privacy API Scanner:** Scans files for calls to `getUserMedia` (camera/mic), `RTCPeerConnection` (WebRTC IP leaks), `geolocation`, and `clipboard`.
+- **🕵️ Storage & Cookie Key Forensics:** Catalogs all storage keys accessed across `chrome.storage.local/sync`, `localStorage`, `sessionStorage`, and `cookies`.
+- **📜 License & Open Source Notice Harvester:** Harvester for MIT, Apache, GPL, BSD, SPDX identifiers, and copyright headers.
+- **📚 Interactive Permissions Risk Encyclopedia:** Searchable permission knowledgebase covering 60+ Chrome/Firefox permissions with threat models.
 - **🛡️ Threat Intel & Security Lookups:** One-click direct pivots to Google Safe Browsing Transparency Reports, Chrome-Stats analytics, and official Web Store listings.
 - **✨ 1-Click Code Beautifier / De-Minifier:** Automatically un-minifies and formats compressed single-line JavaScript, JSON, CSS, and HTML files.
+- **✏️ In-Browser Live Code Modifier & Repackager:** Edit scripts and manifests in memory and download a customized `.zip` archive.
 - **⚖️ Version Diff & Comparison Engine:** Drag and drop two versions of an extension to visualize newly requested permissions, added/removed files, and line-by-line code diffs.
 - **🛡️ Automated Security Audit & Health Score:** Generates an overall security grade (`A+` to `F`) and scans for dangerous code patterns and permissions.
 - **🕒 Recent Lookups & Audit History:** Instant local history with 1-click package reload and clear history controls.
 - **📱 PWA & Standalone App Support:** Install GetCRX as a standalone desktop or mobile Progressive Web App with offline caching support.
+- **🔖 1-Click Browser Bookmarklet:** Draggable bookmarklet for your browser's toolbar to unpack any extension in 1 click from the Chrome Web Store.
+- **💡 Interactive "Load Unpacked" Installation Guide:** Step-by-step visual instructions for installing unpacked extensions in Chrome, Edge, Brave, and Firefox.
 - **🔑 Hardcoded Secrets & Token Detector:** Scans files for exposed AWS keys, OpenAI tokens, Google Cloud API keys, GitHub tokens, Slack tokens, Stripe keys, and private keys.
 - **🎛️ Custom Security Rule Scanner:** Enter custom regular expressions to search for proprietary internal API endpoints, company auth tokens, or specific code signatures across all files.
 - **💻 Syntax-Highlighted Code Viewer:** Tokenized syntax highlighting for JavaScript, TypeScript, JSON, HTML, and CSS with line numbers and jump-to-line highlighting.

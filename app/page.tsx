@@ -41,6 +41,38 @@ import {
   PermissionDoc
 } from "@/lib/permissions-encyclopedia";
 import {
+  calculateHashes,
+  FileHashResult
+} from "@/lib/crypto-hashes";
+import {
+  evaluateCsp,
+  extractContentScripts,
+  extractWarEntries,
+  evaluateExternalMessaging,
+  scanStorageForensics,
+  scanPrivacyApis,
+  detectLibraries,
+  detectObfuscation,
+  harvestLicenses,
+  analyzeCrossBrowserParity,
+  generateEnterprisePolicies,
+  CspReport,
+  ContentScriptEntry,
+  WarEntry,
+  ExternalMessagingAudit,
+  StorageForensicsItem,
+  PrivacyApiFinding,
+  DetectedLibrary,
+  ObfuscationFinding,
+  LicenseFinding,
+  ParityReport,
+  EnterprisePolicyOutput
+} from "@/lib/deep-inspector";
+import {
+  computeBundleAnalytics,
+  BundleAnalytics
+} from "@/lib/bundle-analytics";
+import {
   ShieldAlert,
   ShieldCheck,
   Shield,
@@ -85,7 +117,20 @@ import {
   Radio,
   History,
   Trash2,
-  BookOpen
+  BookOpen,
+  Cpu,
+  Image as ImageIcon,
+  PieChart,
+  Building,
+  Bookmark,
+  Share2,
+  Printer,
+  Edit3,
+  Save,
+  FileCheck,
+  Database,
+  Layers,
+  LockOpen
 } from "lucide-react";
 
 type Meta = {
@@ -109,6 +154,13 @@ interface RecentAuditItem {
   date: number;
 }
 
+interface MediaAssetItem {
+  path: string;
+  name: string;
+  size: number;
+  url: string;
+}
+
 const POPULAR_EXTENSIONS = [
   { name: "uBlock Lite", id: "ddkjiahejlhfcafbddmgiahcphecmpfh" },
   { name: "Dark Reader", id: "eimadpbcbfnmbkopoojfekhnkhdbieeh" },
@@ -118,7 +170,17 @@ const POPULAR_EXTENSIONS = [
   { name: "Bitwarden", id: "nngceckbapebfimnlniiiahkandclblb" }
 ];
 
-type ActiveTab = "overview" | "explorer" | "security" | "network" | "diff" | "mv3";
+type ActiveTab =
+  | "overview"
+  | "explorer"
+  | "security"
+  | "network"
+  | "csp"
+  | "assets"
+  | "analytics"
+  | "enterprise"
+  | "diff"
+  | "mv3";
 
 export default function HomeWrapper() {
   return (
@@ -141,10 +203,13 @@ function Home() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("overview");
   const [copiedCli, setCopiedCli] = useState(false);
+  const [copiedShareLink, setCopiedShareLink] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [showIdGuide, setShowIdGuide] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [showEncyclopedia, setShowEncyclopedia] = useState(false);
+  const [showInstallGuide, setShowInstallGuide] = useState(false);
+  const [showBookmarkletModal, setShowBookmarkletModal] = useState(false);
 
   // Archive inspection state
   const [zipInstance, setZipInstance] = useState<JSZip | null>(null);
@@ -157,8 +222,14 @@ function Home() {
   const [manifestData, setManifestData] = useState<any | null>(null);
   const [copiedFile, setCopiedFile] = useState(false);
   const [copiedManifest, setCopiedManifest] = useState(false);
+  const [copiedHashes, setCopiedHashes] = useState<Record<string, boolean>>({});
 
-  // Code Explorer ergonomics & beautifier
+  // Extracted files memory cache for deep inspectors
+  const [allExtractedFiles, setAllExtractedFiles] = useState<{ path: string; size: number; text?: string }[]>([]);
+  const [mediaAssets, setMediaAssets] = useState<MediaAssetItem[]>([]);
+  const [packageHashes, setPackageHashes] = useState<FileHashResult | null>(null);
+
+  // Code Explorer ergonomics, live modifier & beautifier
   const [isBeautified, setIsBeautified] = useState(false);
   const [isFullscreenCode, setIsFullscreenCode] = useState(false);
   const [fileSearch, setFileSearch] = useState("");
@@ -169,6 +240,10 @@ function Home() {
   const [wrapLines, setWrapLines] = useState(false);
   const [contentSearchMatches, setContentSearchMatches] = useState<SearchMatch[]>([]);
   const [isSearchingContent, setIsSearchingContent] = useState(false);
+  const [isEditingFile, setIsEditingFile] = useState(false);
+  const [editedCode, setEditedCode] = useState("");
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState(false);
+  const [isHardeningDownload, setIsHardeningDownload] = useState(false);
 
   // Deep Security Analysis & Custom Rules State
   const [securityScan, setSecurityScan] = useState<SecurityScanResult | null>(null);
@@ -239,6 +314,8 @@ function Home() {
         setShowCommandPalette(false);
         setShowIdGuide(false);
         setShowEncyclopedia(false);
+        setShowInstallGuide(false);
+        setShowBookmarkletModal(false);
         setIsFullscreenCode(false);
       }
     }
@@ -250,53 +327,67 @@ function Home() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
-    const idParam = params.get("id") || params.get("q") || params.get("ext");
+    const idParam = params.get("id") || params.get("url");
     if (idParam) {
       setQuery(idParam);
       runLookup(idParam);
     }
   }, []);
 
-  // Active code content based on beautify toggle
-  const displayedCode = useMemo(() => {
-    if (!rawFileContent || !selectedFile) return rawFileContent;
-    if (isBeautified) {
-      return beautifyCode(rawFileContent, selectedFile);
-    }
-    return rawFileContent;
-  }, [rawFileContent, selectedFile, isBeautified]);
+  // Compute Deep Forensics using useMemo
+  const cspReport: CspReport | null = useMemo(() => evaluateCsp(manifestData), [manifestData]);
+  const contentScripts: ContentScriptEntry[] = useMemo(() => extractContentScripts(manifestData), [manifestData]);
+  const warEntries: WarEntry[] = useMemo(() => extractWarEntries(manifestData), [manifestData]);
+  const externalMessaging: ExternalMessagingAudit = useMemo(() => evaluateExternalMessaging(manifestData), [manifestData]);
+  const storageForensics: StorageForensicsItem[] = useMemo(() => scanStorageForensics(allExtractedFiles), [allExtractedFiles]);
+  const privacyApis: PrivacyApiFinding[] = useMemo(() => scanPrivacyApis(allExtractedFiles), [allExtractedFiles]);
+  const detectedLibraries: DetectedLibrary[] = useMemo(() => detectLibraries(allExtractedFiles), [allExtractedFiles]);
+  const obfuscationFindings: ObfuscationFinding[] = useMemo(() => detectObfuscation(allExtractedFiles), [allExtractedFiles]);
+  const licenseFindings: LicenseFinding[] = useMemo(() => harvestLicenses(allExtractedFiles), [allExtractedFiles]);
+  const crossBrowserParity: ParityReport = useMemo(() => analyzeCrossBrowserParity(manifestData), [manifestData]);
+  const enterprisePolicies: EnterprisePolicyOutput = useMemo(() => generateEnterprisePolicies(meta?.id || ""), [meta?.id]);
+  const bundleAnalytics: BundleAnalytics = useMemo(
+    () =>
+      computeBundleAnalytics(
+        allExtractedFiles,
+        manifestData?.permissions?.length || 0,
+        manifestData?.permissions?.includes("<all_urls>") || manifestData?.permissions?.includes("*://*/*")
+      ),
+    [allExtractedFiles, manifestData]
+  );
 
-  async function runLookup(inputQuery: string) {
-    const id = extractExtensionId(inputQuery);
-    if (!id) {
-      setErrorMsg("Couldn't find a valid extension ID, Chrome Store link, or Firefox Add-on URL.");
-      setStatus("error");
-      return;
-    }
-
+  async function runLookup(targetIdOrUrl: string) {
     setStatus("looking");
     setErrorMsg(null);
     setMeta(null);
     setZipInstance(null);
     setZipEntries([]);
-    setIsUnpacking(true);
-    setUnpackError(null);
     setSelectedFile(null);
     setRawFileContent(null);
     setFileImageUrl(null);
     setManifestData(null);
     setSecurityScan(null);
     setMv3Check(null);
-    setDiffResult(null);
-    setZipBInstance(null);
     setNetworkHarvest(null);
-    setContentSearchMatches([]);
-    setCustomRuleMatches([]);
-    setActiveTab("overview");
+    setPackageHashes(null);
+    setAllExtractedFiles([]);
+    setMediaAssets([]);
+
+    const id = extractExtensionId(targetIdOrUrl.trim());
+
+    if (!id) {
+      setErrorMsg("Please enter a valid 32-character Chrome extension ID, Chrome Web Store URL, or Firefox Add-on link.");
+      setStatus("error");
+      return;
+    }
 
     try {
-      const res = await fetch(`/api/meta?q=${encodeURIComponent(id)}`);
-      const data = await res.json();
+      const res = await fetch("/api/meta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ q: id })
+      });
+      const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
         setErrorMsg(data.error ?? "Lookup failed. Verify the extension ID or URL.");
@@ -347,18 +438,51 @@ function Home() {
 
       const blob = await res.blob();
       const arrayBuffer = await blob.arrayBuffer();
+
+      // Compute cryptographic hashes
+      calculateHashes(arrayBuffer).then(setPackageHashes);
+
       const zip = await JSZip.loadAsync(arrayBuffer);
       setZipInstance(zip);
 
       const entries: ZipEntryInfo[] = [];
-      zip.forEach((relativePath, file) => {
+      const fileCache: { path: string; size: number; text?: string }[] = [];
+      const mediaList: MediaAssetItem[] = [];
+
+      for (const [relativePath, file] of Object.entries(zip.files)) {
+        const size = (file as any)._data?.uncompressedSize || 0;
         entries.push({
           path: relativePath,
           name: relativePath.split("/").filter(Boolean).pop() || relativePath,
           isDir: file.dir,
-          size: (file as any)._data?.uncompressedSize || 0
+          size
         });
-      });
+
+        if (!file.dir) {
+          if (relativePath.match(/\.(js|mjs|ts|tsx|jsx|json|html|css|txt|md|yml|yaml|xml)$/i)) {
+            try {
+              const text = await file.async("text");
+              fileCache.push({ path: relativePath, size, text });
+            } catch {
+              fileCache.push({ path: relativePath, size });
+            }
+          } else {
+            fileCache.push({ path: relativePath, size });
+            if (relativePath.match(/\.(png|jpe?g|gif|svg|webp|ico)$/i)) {
+              try {
+                const b64 = await file.async("base64");
+                const mime = relativePath.endsWith(".svg") ? "image/svg+xml" : "image/png";
+                mediaList.push({
+                  path: relativePath,
+                  name: relativePath.split("/").pop() || relativePath,
+                  size,
+                  url: `data:${mime};base64,${b64}`
+                });
+              } catch {}
+            }
+          }
+        }
+      }
 
       entries.sort((a, b) => {
         if (a.isDir && !b.isDir) return -1;
@@ -367,6 +491,8 @@ function Home() {
       });
 
       setZipEntries(entries);
+      setAllExtractedFiles(fileCache);
+      setMediaAssets(mediaList);
 
       // Parse and localize manifest.json
       let parsedManifest: any = null;
@@ -440,6 +566,49 @@ function Home() {
     }
   }
 
+  // 1-Click Permission Stripper ("Hardened Mode")
+  async function handleDownloadHardenedZip() {
+    if (!zipInstance || !manifestData) return;
+    setIsHardeningDownload(true);
+
+    try {
+      const hardenedManifest = JSON.parse(JSON.stringify(manifestData));
+      const dangerousPerms = ["<all_urls>", "*://*/*", "webRequestBlocking", "cookies", "nativeMessaging", "debugger", "proxy"];
+      if (Array.isArray(hardenedManifest.permissions)) {
+        hardenedManifest.permissions = hardenedManifest.permissions.filter((p: string) => !dangerousPerms.includes(p));
+      }
+      if (Array.isArray(hardenedManifest.host_permissions)) {
+        hardenedManifest.host_permissions = hardenedManifest.host_permissions.filter((p: string) => !dangerousPerms.includes(p));
+      }
+
+      const cloneZip = new JSZip();
+      for (const [path, file] of Object.entries(zipInstance.files)) {
+        if (!file.dir) {
+          if (path === "manifest.json") {
+            cloneZip.file("manifest.json", JSON.stringify(hardenedManifest, null, 2));
+          } else {
+            const data = await file.async("uint8array");
+            cloneZip.file(path, data);
+          }
+        }
+      }
+
+      const zipBlob = await cloneZip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${meta?.id || "extension"}-hardened-privacy.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert("Failed to build hardened package: " + err.message);
+    } finally {
+      setIsHardeningDownload(false);
+    }
+  }
+
   function handleDownloadRawCrx() {
     if (!meta) return;
     const url = buildCrxDownloadUrl(meta.id);
@@ -479,6 +648,14 @@ function Home() {
     URL.revokeObjectURL(url);
   }
 
+  function handleCopyShareLink() {
+    if (!meta) return;
+    const shareUrl = `${window.location.origin}/?id=${encodeURIComponent(meta.id)}`;
+    navigator.clipboard.writeText(shareUrl);
+    setCopiedShareLink(true);
+    setTimeout(() => setCopiedShareLink(false), 2000);
+  }
+
   async function handleFileDrop(e: React.DragEvent) {
     e.preventDefault();
     setIsDragging(false);
@@ -496,6 +673,10 @@ function Home() {
     setSecurityScan(null);
     setMv3Check(null);
     setNetworkHarvest(null);
+    setPackageHashes(null);
+    setAllExtractedFiles([]);
+    setMediaAssets([]);
+
     setMeta({
       id: file.name.replace(/\.[^/.]+$/, ""),
       name: file.name,
@@ -506,20 +687,51 @@ function Home() {
 
     try {
       const buffer = await file.arrayBuffer();
+      calculateHashes(buffer).then(setPackageHashes);
+
       const uint8 = new Uint8Array(buffer);
       const zipBytes = stripCrxHeaderUint8Array(uint8);
       const zip = await JSZip.loadAsync(zipBytes);
 
       setZipInstance(zip);
       const entries: ZipEntryInfo[] = [];
-      zip.forEach((relativePath, zipFile) => {
+      const fileCache: { path: string; size: number; text?: string }[] = [];
+      const mediaList: MediaAssetItem[] = [];
+
+      for (const [relativePath, zipFile] of Object.entries(zip.files)) {
+        const size = (zipFile as any)._data?.uncompressedSize || 0;
         entries.push({
           path: relativePath,
           name: relativePath.split("/").filter(Boolean).pop() || relativePath,
           isDir: zipFile.dir,
-          size: (zipFile as any)._data?.uncompressedSize || 0
+          size
         });
-      });
+
+        if (!zipFile.dir) {
+          if (relativePath.match(/\.(js|mjs|ts|tsx|jsx|json|html|css|txt|md|yml|yaml|xml)$/i)) {
+            try {
+              const text = await zipFile.async("text");
+              fileCache.push({ path: relativePath, size, text });
+            } catch {
+              fileCache.push({ path: relativePath, size });
+            }
+          } else {
+            fileCache.push({ path: relativePath, size });
+            if (relativePath.match(/\.(png|jpe?g|gif|svg|webp|ico)$/i)) {
+              try {
+                const b64 = await zipFile.async("base64");
+                const mime = relativePath.endsWith(".svg") ? "image/svg+xml" : "image/png";
+                mediaList.push({
+                  path: relativePath,
+                  name: relativePath.split("/").pop() || relativePath,
+                  size,
+                  url: `data:${mime};base64,${b64}`
+                });
+              } catch {}
+            }
+          }
+        }
+      }
 
       entries.sort((a, b) => {
         if (a.isDir && !b.isDir) return -1;
@@ -528,6 +740,8 @@ function Home() {
       });
 
       setZipEntries(entries);
+      setAllExtractedFiles(fileCache);
+      setMediaAssets(mediaList);
 
       let parsedManifest: any = null;
       const manifestFile = zip.file("manifest.json");
@@ -605,60 +819,136 @@ function Home() {
     const fileA = zA.file(path);
     const fileB = zB.file(path);
 
-    const textA = fileA ? await fileA.async("text").catch(() => "(binary)") : "";
-    const textB = fileB ? await fileB.async("text").catch(() => "(binary)") : "";
+    const textA = fileA ? await fileA.async("text").catch(() => "") : "";
+    const textB = fileB ? await fileB.async("text").catch(() => "") : "";
 
     const lines = computeLineDiff(textA, textB);
     setDiffLines(lines);
   }
 
-  async function handleSelectFile(path: string, lineToHighlight?: number) {
+  async function handleSelectFile(path: string, jumpLine?: number) {
     if (!zipInstance) return;
     const file = zipInstance.file(path);
     if (!file) return;
 
     setSelectedFile(path);
-    setFileImageUrl(null);
-    setRawFileContent(null);
-    setHighlightLine(lineToHighlight ?? null);
+    setHighlightLine(jumpLine || null);
+    setIsEditingFile(false);
 
-    const isImage = /\.(png|jpe?g|gif|svg|webp|ico)$/i.test(path);
-    if (isImage) {
+    if (/\.(png|jpe?g|gif|svg|webp|ico)$/i.test(path)) {
+      setRawFileContent(null);
       const blob = await file.async("blob");
       const url = URL.createObjectURL(blob);
       setFileImageUrl(url);
     } else {
+      setFileImageUrl(null);
       try {
         const text = await file.async("text");
         setRawFileContent(text);
+        setEditedCode(text);
       } catch {
-        setRawFileContent("(Binary file — cannot preview text)");
+        setRawFileContent("Binary or non-text file.");
       }
     }
   }
 
-  async function handleDownloadSingleFile(path: string) {
-    if (!zipInstance) return;
-    const file = zipInstance.file(path);
-    if (!file) return;
+  // Save in-browser modified file back into active JSZip
+  function handleSaveModifiedFile() {
+    if (!zipInstance || !selectedFile) return;
+    zipInstance.file(selectedFile, editedCode);
+    setRawFileContent(editedCode);
+    setIsEditingFile(false);
+    setSaveSuccessMsg(true);
+    setTimeout(() => setSaveSuccessMsg(false), 2500);
 
-    const blob = await file.async("blob");
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = path.split("/").pop() || "file";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    // Update file cache for live re-scanning
+    setAllExtractedFiles((prev) =>
+      prev.map((f) => (f.path === selectedFile ? { ...f, text: editedCode } : f))
+    );
   }
 
-  function handleCopyCLI() {
-    if (!meta) return;
-    const curl = `curl -X POST https://getcrx.vercel.app/api/extract -H "Content-Type: application/json" -d '{"q":"${meta.id}"}' -o "${meta.id}.zip"`;
-    navigator.clipboard.writeText(curl);
-    setCopiedCli(true);
-    setTimeout(() => setCopiedCli(false), 2000);
+  async function performContentSearch(searchQuery: string) {
+    if (!zipInstance || !searchQuery.trim()) {
+      setContentSearchMatches([]);
+      return;
+    }
+    setIsSearchingContent(true);
+    const matches: SearchMatch[] = [];
+    const qLower = searchQuery.toLowerCase();
+
+    for (const entry of zipEntries) {
+      if (entry.isDir) continue;
+      if (!/\.(js|json|html|css|ts|jsx|tsx|md|txt|xml|yaml|yml)$/i.test(entry.path)) continue;
+
+      const file = zipInstance.file(entry.path);
+      if (!file) continue;
+
+      try {
+        const text = await file.async("text");
+        const lines = text.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].toLowerCase().includes(qLower)) {
+            matches.push({
+              file: entry.path,
+              line: i + 1,
+              snippet: lines[i].trim().slice(0, 100)
+            });
+            if (matches.length >= 80) break;
+          }
+        }
+      } catch {}
+      if (matches.length >= 80) break;
+    }
+
+    setContentSearchMatches(matches);
+    setIsSearchingContent(false);
+  }
+
+  async function runCustomRuleScan() {
+    if (!zipInstance || !customRuleInput.trim()) return;
+    setIsScanningCustomRule(true);
+    setCustomRuleMatches([]);
+
+    try {
+      const regex = new RegExp(customRuleInput.trim(), "g");
+      const matches: Array<{ file: string; line: number; snippet: string }> = [];
+
+      for (const entry of zipEntries) {
+        if (entry.isDir) continue;
+        if (!/\.(js|json|html|css|ts|jsx|tsx)$/i.test(entry.path)) continue;
+
+        const file = zipInstance.file(entry.path);
+        if (!file) continue;
+
+        const text = await file.async("text").catch(() => "");
+        const lines = text.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+          regex.lastIndex = 0;
+          if (regex.test(lines[i])) {
+            matches.push({
+              file: entry.path,
+              line: i + 1,
+              snippet: lines[i].trim().slice(0, 120)
+            });
+            if (matches.length >= 100) break;
+          }
+        }
+        if (matches.length >= 100) break;
+      }
+      setCustomRuleMatches(matches);
+    } catch {
+      alert("Invalid Regular Expression pattern.");
+    } finally {
+      setIsScanningCustomRule(false);
+    }
+  }
+
+  function handleCopyHash(key: string, value: string) {
+    navigator.clipboard.writeText(value);
+    setCopiedHashes((prev) => ({ ...prev, [key]: true }));
+    setTimeout(() => {
+      setCopiedHashes((prev) => ({ ...prev, [key]: false }));
+    }, 2000);
   }
 
   function handleCopyCode() {
@@ -668,474 +958,374 @@ function Home() {
     setTimeout(() => setCopiedFile(false), 2000);
   }
 
-  function handleCopyManifestJson() {
-    if (!manifestData) return;
-    navigator.clipboard.writeText(JSON.stringify(manifestData, null, 2));
-    setCopiedManifest(true);
-    setTimeout(() => setCopiedManifest(false), 2000);
-  }
+  function handleDownloadSingleFile(path: string) {
+    if (!zipInstance) return;
+    const file = zipInstance.file(path);
+    if (!file) return;
 
-  // Full-text search across all files in the archive
-  async function performContentSearch(term: string) {
-    if (!zipInstance || !term.trim()) {
-      setContentSearchMatches([]);
-      return;
-    }
-
-    setIsSearchingContent(true);
-    const matches: SearchMatch[] = [];
-    const textExts = /\.(js|ts|jsx|tsx|json|html|htm|css|txt|md)$/i;
-
-    const promises: Promise<void>[] = [];
-    zipInstance.forEach((relativePath, file) => {
-      if (file.dir || !textExts.test(relativePath)) return;
-
-      promises.push(
-        (async () => {
-          try {
-            const text = await file.async("text");
-            const lines = text.split("\n");
-            const lowerTerm = term.toLowerCase();
-
-            for (let i = 0; i < lines.length; i++) {
-              if (lines[i].toLowerCase().includes(lowerTerm)) {
-                matches.push({
-                  file: relativePath,
-                  line: i + 1,
-                  snippet: lines[i].trim().slice(0, 140)
-                });
-                if (matches.length >= 80) break;
-              }
-            }
-          } catch {}
-        })()
-      );
+    file.async("blob").then((blob) => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = path.split("/").pop() || "file";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     });
-
-    await Promise.all(promises);
-    setContentSearchMatches(matches);
-    setIsSearchingContent(false);
   }
 
-  // Custom Security Rule Scanner
-  async function runCustomRuleScan(pattern: string) {
-    if (!zipInstance || !pattern.trim()) {
-      setCustomRuleMatches([]);
-      return;
+  function toggleFolder(path: string) {
+    setExpandedFolders((prev) => ({ ...prev, [path]: !prev[path] }));
+  }
+
+  const fileTree = useMemo(() => buildFileTree(zipEntries), [zipEntries]);
+
+  const displayedCode = useMemo(() => {
+    if (!rawFileContent) return null;
+    if (isBeautified && selectedFile) {
+      return beautifyCode(rawFileContent, selectedFile);
     }
+    return rawFileContent;
+  }, [rawFileContent, isBeautified, selectedFile]);
 
-    setIsScanningCustomRule(true);
-    const matches: Array<{ file: string; line: number; snippet: string }> = [];
-    let regex: RegExp;
-
-    try {
-      regex = new RegExp(pattern, "gi");
-    } catch {
-      alert("Invalid regular expression pattern.");
-      setIsScanningCustomRule(false);
-      return;
-    }
-
-    const textExts = /\.(js|ts|jsx|tsx|json|html|htm|css|txt|md|yaml|yml)$/i;
-    const promises: Promise<void>[] = [];
-
-    zipInstance.forEach((relativePath, file) => {
-      if (file.dir || !textExts.test(relativePath)) return;
-
-      promises.push(
-        (async () => {
-          try {
-            const text = await file.async("text");
-            const lines = text.split("\n");
-            for (let i = 0; i < lines.length; i++) {
-              regex.lastIndex = 0;
-              if (regex.test(lines[i])) {
-                matches.push({
-                  file: relativePath,
-                  line: i + 1,
-                  snippet: lines[i].trim().slice(0, 150)
-                });
-                if (matches.length >= 100) break;
-              }
-            }
-          } catch {}
-        })()
-      );
-    });
-
-    await Promise.all(promises);
-    setCustomRuleMatches(matches);
-    setIsScanningCustomRule(false);
-  }
-
-  function reset() {
-    setStatus("idle");
-    setMeta(null);
-    setErrorMsg(null);
-    setQuery("");
-    setZipInstance(null);
-    setZipEntries([]);
-    setSelectedFile(null);
-    setRawFileContent(null);
-    setManifestData(null);
-    setSecurityScan(null);
-    setMv3Check(null);
-    setDiffResult(null);
-    setZipBInstance(null);
-    setNetworkHarvest(null);
-    setContentSearchMatches([]);
-    setCustomRuleMatches([]);
-    setActiveTab("overview");
-    inputRef.current?.focus();
-  }
-
-  const permissionsList = useMemo(() => {
-    if (!manifestData) return [];
-    const regular = manifestData.permissions || [];
-    const host = manifestData.host_permissions || [];
-    const optional = manifestData.optional_permissions || [];
-    const all = Array.from(new Set([...regular, ...host, ...optional]));
-    return all.map(classifyPermission);
-  }, [manifestData]);
-
-  const filteredEntries = useMemo(() => {
-    if (!fileSearch.trim()) return zipEntries;
-    return zipEntries.filter((e) => e.path.toLowerCase().includes(fileSearch.toLowerCase()));
-  }, [zipEntries, fileSearch]);
-
-  const treeNodes = useMemo(() => {
-    return buildFileTree(filteredEntries);
-  }, [filteredEntries]);
+  const filteredTreeNodes = useMemo(() => {
+    if (!fileSearch.trim() || searchMode === "content") return fileTree;
+    const q = fileSearch.toLowerCase();
+    const matchedEntries = zipEntries.filter((e) => e.path.toLowerCase().includes(q));
+    return buildFileTree(matchedEntries);
+  }, [fileTree, fileSearch, searchMode, zipEntries]);
 
   const filteredNetworkEndpoints = useMemo(() => {
     if (!networkHarvest) return [];
     if (!networkFilter.trim()) return networkHarvest.endpoints;
-    const term = networkFilter.toLowerCase();
-    return networkHarvest.endpoints.filter((e) => e.url.toLowerCase().includes(term) || e.domain.toLowerCase().includes(term));
+    const q = networkFilter.toLowerCase();
+    return networkHarvest.endpoints.filter(
+      (ep) =>
+        ep.url.toLowerCase().includes(q) ||
+        ep.domain.toLowerCase().includes(q) ||
+        ep.file.toLowerCase().includes(q)
+    );
   }, [networkHarvest, networkFilter]);
 
   const filteredEncyclopedia = useMemo(() => {
-    return PERMISSIONS_DATABASE.filter((p) => {
-      const matchCat = encyclopediaCategory === "All" || p.category === encyclopediaCategory;
-      const matchSearch =
+    return PERMISSIONS_DATABASE.filter((doc) => {
+      const matchesCat = encyclopediaCategory === "All" || doc.category === encyclopediaCategory;
+      const matchesQuery =
         !encyclopediaSearch.trim() ||
-        p.name.toLowerCase().includes(encyclopediaSearch.toLowerCase()) ||
-        p.summary.toLowerCase().includes(encyclopediaSearch.toLowerCase());
-      return matchCat && matchSearch;
+        doc.name.toLowerCase().includes(encyclopediaSearch.toLowerCase()) ||
+        doc.summary.toLowerCase().includes(encyclopediaSearch.toLowerCase()) ||
+        doc.threatModel.toLowerCase().includes(encyclopediaSearch.toLowerCase());
+      return matchesCat && matchesQuery;
     });
   }, [encyclopediaSearch, encyclopediaCategory]);
 
-  function toggleFolder(folderPath: string) {
-    setExpandedFolders((prev) => ({
-      ...prev,
-      [folderPath]: !prev[folderPath]
-    }));
-  }
-
   return (
     <main
+      className={`min-h-screen relative flex flex-col justify-between selection:bg-brass selection:text-ink transition-colors ${
+        isDragging ? "ring-4 ring-brass ring-inset bg-surface/90" : ""
+      }`}
       onDragOver={(e) => {
         e.preventDefault();
         setIsDragging(true);
       }}
-      onDragLeave={(e) => {
-        e.preventDefault();
-        setIsDragging(false);
-      }}
+      onDragLeave={() => setIsDragging(false)}
       onDrop={handleFileDrop}
-      className="relative min-h-screen bg-ink text-paper overflow-x-hidden"
     >
-      <div className="grain" />
+      <div className="noise" />
 
-      {/* Drag Overlay */}
-      {isDragging && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-ink/90 backdrop-blur-sm border-2 border-dashed border-brass pointer-events-none">
-          <UploadCloud className="w-16 h-16 text-brass animate-bounce" />
-          <p className="mt-4 text-xl font-display font-semibold text-paper">Drop .CRX, .XPI, or .ZIP file to unpack</p>
-          <p className="text-sm text-muted">Zero-upload client-side extraction</p>
-        </div>
-      )}
-
-      {/* Header */}
-      <header className="mx-auto flex max-w-6xl items-center justify-between px-6 pt-8 pb-4 border-b border-line/40">
-        <div className="flex items-center gap-3 cursor-pointer" onClick={reset}>
+      {/* Top Navigation Bar */}
+      <header className="border-b border-line px-6 py-4 flex items-center justify-between relative z-10">
+        <div className="flex items-center gap-3">
           <CrateMark />
           <div>
-            <div className="flex items-center gap-2">
-              <span className="font-display text-xl font-bold tracking-tight text-paper">GetCRX</span>
-            </div>
-            <p className="text-[11px] text-muted tracking-tight">Chrome & Firefox Extension Unpacker & Security Auditor</p>
+            <span className="font-display font-bold text-lg text-paper tracking-wide">
+              GetCRX <span className="text-brass text-sm font-mono font-normal">/ Unpacked</span>
+            </span>
+            <p className="text-[10px] font-mono text-muted uppercase tracking-widest hidden sm:block">
+              Browser Extension Extractor & Security Inspector
+            </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 text-xs">
+        <div className="flex items-center gap-2 font-mono text-xs text-muted">
+          {meta && (
+            <button
+              onClick={handleCopyShareLink}
+              title="Copy Direct Shareable Link"
+              className="px-2.5 py-1.5 rounded-lg border border-line bg-surface hover:bg-surface2 text-paper transition-colors flex items-center gap-1.5"
+            >
+              {copiedShareLink ? <Check className="w-3.5 h-3.5 text-teal" /> : <Share2 className="w-3.5 h-3.5" />}
+              <span className="hidden md:inline">{copiedShareLink ? "Link Copied" : "Share"}</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => setShowInstallGuide(true)}
+            className="px-2.5 py-1.5 rounded-lg border border-line bg-surface hover:bg-surface2 text-paper transition-colors flex items-center gap-1.5"
+          >
+            <Layers className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden md:inline">Install Guide</span>
+          </button>
+
+          <button
+            onClick={() => setShowBookmarkletModal(true)}
+            className="px-2.5 py-1.5 rounded-lg border border-line bg-surface hover:bg-surface2 text-paper transition-colors flex items-center gap-1.5"
+          >
+            <Bookmark className="w-3.5 h-3.5 text-teal" />
+            <span className="hidden md:inline">Bookmarklet</span>
+          </button>
+
           <button
             onClick={() => setShowEncyclopedia(true)}
-            className="focus-ring rounded px-2.5 py-1 bg-surface border border-line text-muted hover:text-paper text-[11px] font-mono flex items-center gap-1.5 transition-colors hidden sm:flex"
+            className="px-2.5 py-1.5 rounded-lg border border-line bg-surface hover:bg-surface2 text-paper transition-colors flex items-center gap-1.5"
           >
-            <BookOpen className="w-3 h-3 text-teal" />
-            <span>Permissions Doc</span>
+            <BookOpen className="w-3.5 h-3.5 text-brass" />
+            <span className="hidden md:inline">Permissions Doc</span>
           </button>
+
           <button
             onClick={() => setShowCommandPalette(true)}
-            className="focus-ring rounded px-2.5 py-1 bg-surface border border-line text-muted hover:text-paper text-[11px] font-mono flex items-center gap-1.5 transition-colors"
+            className="px-2.5 py-1.5 rounded-lg border border-line bg-surface hover:bg-surface2 text-paper transition-colors flex items-center gap-1.5"
           >
-            <Command className="w-3 h-3 text-brass" />
-            <span>Cmd+K</span>
+            <Command className="w-3.5 h-3.5 text-brass" />
+            <span className="hidden sm:inline">Cmd+K</span>
           </button>
-          <button
-            onClick={() => setShowIdGuide(true)}
-            className="focus-ring rounded text-muted transition-colors hover:text-brass flex items-center gap-1.5"
-          >
-            <HelpCircle className="w-3.5 h-3.5 text-brass" />
-            <span>Where is ID</span>
-          </button>
-          <span className="text-line hidden sm:inline-block">|</span>
-          <span className="font-mono text-muted text-[11px] hidden sm:inline-block">
-            Dev by <span className="text-brass font-medium">JOJIN JOHN</span>
-          </span>
         </div>
       </header>
 
-      {/* Hero Section */}
-      <section className="mx-auto max-w-6xl px-6 pt-12 pb-16">
-        <div className="text-center max-w-2xl mx-auto">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-line bg-surface/80 text-xs text-muted mb-4 shadow-sm">
-            <span className="w-2 h-2 rounded-full bg-teal animate-pulse" />
-            <span>Source Code Explorer • Telemetry Harvester • Version Diff Engine</span>
-          </div>
+      {/* Main Content Body */}
+      <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8 max-w-7xl mx-auto w-full relative z-10">
+        {/* Search Hero Box */}
+        <section className="w-full max-w-2xl text-center space-y-4 mb-6">
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
+            <h1 className="font-display font-bold text-3xl sm:text-5xl text-paper tracking-tight">
+              Unpack & Audit <span className="text-brass">Any Extension</span>
+            </h1>
+            <p className="text-xs sm:text-sm text-muted mt-2 max-w-md mx-auto">
+              Extract source code, beautify minified scripts, harvest telemetry URLs, and audit security attack surfaces in real-time.
+            </p>
+          </motion.div>
 
-          <h1 className="font-display text-4xl sm:text-5xl font-bold tracking-tight leading-[1.1] text-paper">
-            Extract, inspect, and audit any{" "}
-            <span className="bg-gradient-to-r from-brass via-amber-300 to-teal bg-clip-text text-transparent">
-              Browser Extension.
-            </span>
-          </h1>
-
-          <p className="mt-4 text-[15px] leading-relaxed text-muted">
-            Paste a Chrome Web Store link, Firefox Add-on URL, or 32-character ID. GetCRX strips binary container headers,
-            formats code, harvests network endpoints, and scans for secrets and vulnerabilities in real time.
-          </p>
-        </div>
-
-        {/* Input Bar */}
-        <form onSubmit={handleLookup} className="mt-8 max-w-2xl mx-auto">
-          <div className="flex flex-col sm:flex-row gap-2.5 p-1.5 bg-surface border border-line rounded-xl shadow-2xl focus-within:border-brass/70 transition-colors">
-            <div className="relative flex-1 flex items-center">
-              <Search className="w-4 h-4 text-muted absolute left-3.5" />
-              <input
-                ref={inputRef}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Paste Chrome Web Store link, Firefox URL, 32-char ID, or drop .crx/.xpi"
-                disabled={status === "looking" || status === "extracting"}
-                className="w-full bg-transparent pl-10 pr-4 py-3 font-mono text-[13px] text-paper placeholder:text-muted/60 focus:outline-none"
-              />
-            </div>
+          <form onSubmit={handleLookup} className="relative flex items-center mt-4">
+            <Search className="w-4 h-4 text-muted absolute left-4 pointer-events-none" />
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Paste Chrome/Firefox Store URL or 32-char ID (e.g. uBlock, Dark Reader)..."
+              className="w-full bg-surface border border-line rounded-xl pl-11 pr-28 py-3.5 text-sm text-paper placeholder:text-muted/60 focus:outline-none focus:border-brass focus:ring-1 focus:ring-brass transition-all font-mono"
+            />
             <button
               type="submit"
-              disabled={status === "looking" || status === "extracting" || !query.trim()}
-              className="shrink-0 rounded-lg bg-brass px-6 py-3 text-sm font-semibold text-ink transition-all hover:bg-brassDim disabled:opacity-40 flex items-center justify-center gap-2"
+              disabled={status === "looking" || !query.trim()}
+              className="absolute right-2 px-4 py-2 bg-brass text-ink font-semibold rounded-lg text-xs hover:bg-brassDim disabled:opacity-50 disabled:cursor-not-allowed transition-all font-mono flex items-center gap-1.5"
             >
               {status === "looking" ? (
                 <>
-                  <span className="w-4 h-4 border-2 border-ink border-t-transparent rounded-full animate-spin" />
-                  <span>Looking up…</span>
+                  <span className="w-3 h-3 border-2 border-ink border-t-transparent rounded-full animate-spin" />
+                  <span>Looking...</span>
                 </>
               ) : (
-                "Look up"
+                <span>Look up</span>
               )}
             </button>
-          </div>
-        </form>
+          </form>
 
-        {/* Popular Quick-Select Chips */}
-        <div className="mt-4 flex flex-wrap items-center justify-center gap-1.5 max-w-2xl mx-auto text-xs text-muted">
-          <span className="text-[11px] font-mono text-muted/70 mr-1">Popular:</span>
-          {POPULAR_EXTENSIONS.map((ext) => (
-            <button
-              key={ext.id}
-              onClick={() => {
-                setQuery(ext.id);
-                runLookup(ext.id);
-              }}
-              className="px-2.5 py-1 rounded-md border border-line/60 bg-surface/60 hover:bg-surface2 hover:border-brass/40 hover:text-paper transition-colors text-[11px] font-mono"
-            >
-              {ext.name}
-            </button>
-          ))}
-          <button
-            onClick={() => setShowIdGuide(true)}
-            className="px-2 py-1 text-brass text-[11px] hover:underline flex items-center gap-1"
-          >
-            <HelpCircle className="w-3 h-3" />
-            <span>Where is ID?</span>
-          </button>
-        </div>
-
-        {/* Recent Audits History Chips */}
-        {recentAudits.length > 0 && status === "idle" && (
-          <div className="mt-6 p-4 rounded-xl border border-line bg-surface/60 max-w-2xl mx-auto">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-mono font-semibold text-muted flex items-center gap-1.5">
-                <History className="w-3.5 h-3.5 text-brass" />
-                <span>Recent Audits</span>
-              </span>
-              <button
-                onClick={clearRecentAudits}
-                className="text-[11px] font-mono text-muted/60 hover:text-danger flex items-center gap-1 transition-colors"
-              >
-                <Trash2 className="w-3 h-3" />
-                <span>Clear History</span>
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {recentAudits.map((item) => (
+          {/* Quick Shortcuts & Drop Hint */}
+          <div className="flex items-center justify-between text-xs text-muted font-mono px-1 flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-muted/60">Try:</span>
+              {POPULAR_EXTENSIONS.map((pop) => (
                 <button
-                  key={item.id}
+                  key={pop.id}
+                  type="button"
                   onClick={() => {
-                    setQuery(item.id);
-                    runLookup(item.id);
+                    setQuery(pop.id);
+                    runLookup(pop.id);
                   }}
-                  className="px-2.5 py-1.5 rounded-lg border border-line bg-surface hover:bg-surface2 hover:border-brass/40 transition-colors text-xs flex items-center gap-2 max-w-[200px]"
+                  className="hover:text-brass text-[11px] underline underline-offset-2 transition-colors"
                 >
-                  {item.icon ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={item.icon} alt="" className="w-3.5 h-3.5 rounded object-contain shrink-0" />
-                  ) : (
-                    <Package className="w-3.5 h-3.5 text-muted shrink-0" />
-                  )}
-                  <span className="truncate font-mono text-[11px] text-paper">{item.name}</span>
+                  {pop.name}
                 </button>
               ))}
             </div>
+
+            <button
+              type="button"
+              onClick={() => setShowIdGuide(true)}
+              className="text-[11px] hover:text-paper flex items-center gap-1 text-teal underline underline-offset-2"
+            >
+              <HelpCircle className="w-3 h-3" />
+              <span>Where to find ID?</span>
+            </button>
           </div>
+
+          {/* Recent Audits History Bar */}
+          {recentAudits.length > 0 && (
+            <div className="pt-2 flex items-center justify-between gap-2 border-t border-line/40 text-[11px] font-mono text-muted">
+              <div className="flex items-center gap-1.5 truncate">
+                <History className="w-3 h-3 text-brass shrink-0" />
+                <span className="text-muted/80 shrink-0">Recent:</span>
+                <div className="flex items-center gap-2 overflow-x-auto py-1">
+                  {recentAudits.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        setQuery(item.id);
+                        runLookup(item.id);
+                      }}
+                      className="px-2 py-0.5 rounded bg-surface2/60 hover:bg-surface2 hover:text-paper text-paper/80 border border-line text-[10px] truncate max-w-[120px]"
+                    >
+                      {item.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <button
+                onClick={clearRecentAudits}
+                title="Clear History"
+                className="hover:text-danger text-muted/60 p-1 shrink-0"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+        </section>
+
+        {/* Error Alert */}
+        {status === "error" && errorMsg && (
+          <motion.div
+            initial={{ opacity: 0, y: 5 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="w-full max-w-2xl mb-6 p-4 rounded-xl border border-danger/30 bg-danger/10 text-danger text-xs flex items-center gap-3 font-mono"
+          >
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <p className="flex-1">{errorMsg}</p>
+          </motion.div>
         )}
 
-        {/* Status Messages */}
-        <AnimatePresence mode="wait">
-          {status === "error" && errorMsg && (
-            <motion.div
-              key="error"
-              initial={{ opacity: 0, y: -6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              className="mt-6 max-w-2xl mx-auto rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger flex items-center gap-3"
-            >
-              <AlertTriangle className="w-5 h-5 shrink-0" />
-              <span>{errorMsg}</span>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {/* Extension Inspection Workspace */}
+        {meta && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full max-w-6xl space-y-6"
+          >
+            {/* Header Card with Icon & Metadata */}
+            <div className="p-6 rounded-2xl border border-line bg-surface flex flex-col md:flex-row items-start md:items-center justify-between gap-6 shadow-xl relative overflow-hidden">
+              <div className="flex items-start gap-4">
+                {meta.icon ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={meta.icon}
+                    alt={meta.name || "Extension icon"}
+                    className="w-16 h-16 rounded-xl border border-line bg-surface2 p-1.5 object-contain shrink-0"
+                  />
+                ) : (
+                  <div className="w-16 h-16 rounded-xl border border-line bg-surface2 flex items-center justify-center text-muted shrink-0">
+                    <Package className="w-8 h-8 text-brass" />
+                  </div>
+                )}
 
-        {/* Main Result Interface */}
-        <AnimatePresence mode="wait">
-          {meta && (status === "found" || status === "extracting" || status === "done") && (
-            <motion.div
-              key="result"
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              className="mt-10 rounded-2xl border border-line bg-surface overflow-hidden shadow-2xl"
-            >
-              {/* Card Header Banner */}
-              <div className="p-6 border-b border-line bg-surface2/40 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="flex items-start gap-4 min-w-0">
-                  {meta.icon ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={meta.icon}
-                      alt=""
-                      className="w-14 h-14 shrink-0 rounded-xl border border-line object-cover bg-surface"
-                    />
-                  ) : (
-                    <div className="w-14 h-14 shrink-0 rounded-xl border border-line bg-surface2 flex items-center justify-center text-muted">
-                      <Package className="w-6 h-6 text-muted" />
-                    </div>
-                  )}
-
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2.5 flex-wrap">
-                      <h2 className="text-lg font-bold text-paper truncate">{meta.name || "Unnamed Extension"}</h2>
-                      {manifestData?.version && (
-                        <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-surface border border-line text-muted">
-                          v{manifestData.version}
-                        </span>
-                      )}
-                      {manifestData?.manifest_version && (
-                        <span
-                          className={`text-[11px] font-mono font-medium px-2 py-0.5 rounded border ${
-                            manifestData.manifest_version === 3
-                              ? "bg-teal/10 text-teal border-teal/30"
-                              : "bg-amber-500/10 text-amber-400 border-amber-500/30"
-                          }`}
-                        >
-                          MV{manifestData.manifest_version}
-                        </span>
-                      )}
-                      {securityScan && (
-                        <span
-                          className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded border ${
-                            securityScan.grade === "A+" || securityScan.grade === "A"
-                              ? "bg-teal/15 text-teal border-teal/30"
-                              : securityScan.grade === "B"
-                              ? "bg-amber-400/15 text-amber-400 border-amber-400/30"
-                              : "bg-danger/15 text-danger border-danger/30"
-                          }`}
-                        >
-                          Security: {securityScan.grade} ({securityScan.score}/100)
-                        </span>
-                      )}
-                    </div>
-                    <p className="font-mono text-xs text-muted/80 truncate mt-0.5">{meta.id}</p>
-                    {meta.description && (
-                      <p className="text-xs text-muted/90 line-clamp-2 mt-1.5 leading-relaxed">{meta.description}</p>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="font-display font-bold text-xl sm:text-2xl text-paper">
+                      {meta.name || "Extension Archive"}
+                    </h2>
+                    {manifestData?.version && (
+                      <span className="text-xs font-mono px-2 py-0.5 rounded bg-surface2 text-brass border border-line">
+                        v{manifestData.version}
+                      </span>
+                    )}
+                    {manifestData?.manifest_version && (
+                      <span className="text-xs font-mono px-2 py-0.5 rounded bg-surface2 text-teal border border-line">
+                        MV{manifestData.manifest_version}
+                      </span>
                     )}
                   </div>
-                </div>
-
-                {/* Primary Download Actions */}
-                <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                  <button
-                    onClick={handleDownloadZip}
-                    disabled={status === "extracting"}
-                    className="focus-ring flex items-center gap-2 rounded-lg bg-teal px-4 py-2.5 text-xs font-semibold text-ink transition-all hover:bg-teal/90 disabled:opacity-50 shadow-sm"
-                  >
-                    {status === "done" ? <Check className="w-3.5 h-3.5" /> : <Download className="w-3.5 h-3.5" />}
-                    {status === "extracting" ? "Unpacking…" : status === "done" ? "Downloaded" : "Get Source (.zip)"}
-                  </button>
-
-                  <button
-                    onClick={handleDownloadRawCrx}
-                    title="Download raw original .crx file signed by Chrome"
-                    className="focus-ring flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-2.5 text-xs font-medium text-muted hover:text-paper hover:bg-surface2 transition-colors"
-                  >
-                    <FileArchive className="w-3.5 h-3.5" />
-                    <span>Raw Package</span>
-                  </button>
-
-                  <button
-                    onClick={handleDownloadManifest}
-                    title="Download parsed manifest.json"
-                    className="focus-ring flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-2.5 text-xs font-medium text-muted hover:text-paper hover:bg-surface2 transition-colors"
-                  >
-                    <FileText className="w-3.5 h-3.5 text-brass" />
-                    <span>Manifest</span>
-                  </button>
-
-                  <button
-                    onClick={handleCopyCLI}
-                    title="Copy cURL CLI command"
-                    className="focus-ring flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-2.5 text-xs font-medium text-muted hover:text-paper hover:bg-surface2 transition-colors"
-                  >
-                    {copiedCli ? <Check className="w-3.5 h-3.5 text-teal" /> : <Terminal className="w-3.5 h-3.5" />}
-                    <span>{copiedCli ? "Copied" : "cURL"}</span>
-                  </button>
+                  <p className="text-xs text-muted max-w-xl line-clamp-2">{meta.description}</p>
+                  <p className="text-[11px] font-mono text-muted/70 flex items-center gap-2 pt-1">
+                    <span>ID: {meta.id}</span>
+                    <span>&bull;</span>
+                    <span>{zipEntries.filter((e) => !e.isDir).length} files</span>
+                    <span>&bull;</span>
+                    <span>{bundleAnalytics.totalLOC.toLocaleString()} LOC</span>
+                  </p>
                 </div>
               </div>
 
-              {/* Navigation Tabs */}
-              <div className="flex items-center border-b border-line bg-surface px-6 text-xs font-medium overflow-x-auto">
+              {/* Action Buttons */}
+              <div className="flex items-center gap-2.5 flex-wrap w-full md:w-auto">
+                <button
+                  onClick={handleDownloadZip}
+                  className="flex-1 md:flex-initial px-4 py-2.5 bg-brass text-ink font-semibold rounded-xl text-xs hover:bg-brassDim transition-all font-mono flex items-center justify-center gap-2 shadow-lg"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Download .ZIP</span>
+                </button>
+
+                <button
+                  onClick={handleDownloadHardenedZip}
+                  disabled={isHardeningDownload}
+                  title="Strip broad permissions and download privacy-hardened zip"
+                  className="px-3.5 py-2.5 bg-surface border border-teal/40 text-teal hover:bg-teal/10 rounded-xl text-xs transition-all font-mono flex items-center gap-1.5"
+                >
+                  <LockOpen className="w-4 h-4" />
+                  <span>{isHardeningDownload ? "Hardening..." : "Hardened Zip"}</span>
+                </button>
+
+                <button
+                  onClick={handleDownloadRawCrx}
+                  title="Download raw signed CRX container directly from store CDN"
+                  className="px-3.5 py-2.5 bg-surface border border-line hover:border-brass/50 text-paper rounded-xl text-xs transition-all font-mono flex items-center gap-1.5"
+                >
+                  <FileArchive className="w-4 h-4 text-brass" />
+                  <span className="hidden sm:inline">Raw .CRX</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Cryptographic Hashes & Fingerprints Bar */}
+            {packageHashes && (
+              <div className="p-3.5 rounded-xl border border-line bg-surface2/40 flex items-center justify-between gap-4 flex-wrap text-xs font-mono">
+                <div className="flex items-center gap-4 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted text-[11px]">SHA-256:</span>
+                    <span className="text-teal text-[11px] truncate max-w-[200px] sm:max-w-xs">{packageHashes.sha256}</span>
+                    <button
+                      onClick={() => handleCopyHash("sha256", packageHashes.sha256)}
+                      className="text-muted hover:text-paper"
+                      title="Copy SHA-256"
+                    >
+                      {copiedHashes.sha256 ? <Check className="w-3 h-3 text-teal" /> : <Copy className="w-3 h-3" />}
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2 hidden md:flex">
+                    <span className="text-muted text-[11px]">MD5:</span>
+                    <span className="text-brass text-[11px]">{packageHashes.md5}</span>
+                    <button
+                      onClick={() => handleCopyHash("md5", packageHashes.md5)}
+                      className="text-muted hover:text-paper"
+                      title="Copy MD5"
+                    >
+                      {copiedHashes.md5 ? <Check className="w-3 h-3 text-teal" /> : <Copy className="w-3 h-3" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded bg-surface border border-line text-[10px] text-muted">
+                    {bundleAnalytics.riskCategoryBadge} ({bundleAnalytics.storeRiskPercentile}th percentile)
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Workspace Tab Navigation */}
+            <div className="rounded-2xl border border-line bg-surface overflow-hidden shadow-2xl">
+              <div className="border-b border-line flex items-center px-4 overflow-x-auto text-xs font-mono bg-surface2/40">
                 <button
                   onClick={() => setActiveTab("overview")}
                   className={`py-3.5 px-4 border-b-2 flex items-center gap-2 transition-colors shrink-0 ${
@@ -1144,17 +1334,15 @@ function Home() {
                       : "border-transparent text-muted hover:text-paper"
                   }`}
                 >
-                  <Eye className="w-4 h-4" />
-                  <span>Overview</span>
+                  <Sliders className="w-4 h-4" />
+                  <span>Overview & Permissions</span>
                 </button>
 
                 <button
                   onClick={() => {
                     setActiveTab("explorer");
                     if (!selectedFile && zipEntries.length > 0) {
-                      const firstCode =
-                        zipEntries.find((e) => !e.isDir && e.name.endsWith("manifest.json")) ||
-                        zipEntries.find((e) => !e.isDir);
+                      const firstCode = zipEntries.find((e) => !e.isDir);
                       if (firstCode) handleSelectFile(firstCode.path);
                     }
                   }}
@@ -1164,10 +1352,8 @@ function Home() {
                       : "border-transparent text-muted hover:text-paper"
                   }`}
                 >
-                  <FileCode className="w-4 h-4" />
-                  <span>
-                    Code Explorer ({isUnpacking ? "..." : `${zipEntries.filter((e) => !e.isDir).length}`})
-                  </span>
+                  <Code className="w-4 h-4 text-teal" />
+                  <span>Code Explorer & De-Minifier</span>
                 </button>
 
                 <button
@@ -1178,13 +1364,25 @@ function Home() {
                       : "border-transparent text-muted hover:text-paper"
                   }`}
                 >
-                  <ShieldAlert className="w-4 h-4" />
-                  <span>Security & Custom Rules</span>
+                  <ShieldAlert className="w-4 h-4 text-danger" />
+                  <span>Security, Secrets & Forensics</span>
                   {securityScan && (securityScan.summary.critical > 0 || securityScan.summary.high > 0) && (
                     <span className="px-1.5 py-0.2 rounded-full bg-danger/20 text-danger text-[10px] font-mono border border-danger/30">
                       {securityScan.summary.critical + securityScan.summary.high}
                     </span>
                   )}
+                </button>
+
+                <button
+                  onClick={() => setActiveTab("csp")}
+                  className={`py-3.5 px-4 border-b-2 flex items-center gap-2 transition-colors shrink-0 ${
+                    activeTab === "csp"
+                      ? "border-brass text-brass"
+                      : "border-transparent text-muted hover:text-paper"
+                  }`}
+                >
+                  <Lock className="w-4 h-4 text-amber-400" />
+                  <span>CSP & Attack Surface</span>
                 </button>
 
                 <button
@@ -1196,9 +1394,43 @@ function Home() {
                   }`}
                 >
                   <Radio className="w-4 h-4 text-teal" />
-                  <span>
-                    Network & Telemetry ({networkHarvest ? networkHarvest.uniqueDomains.length : "..."})
-                  </span>
+                  <span>Network Endpoints ({networkHarvest ? networkHarvest.uniqueDomains.length : "..."})</span>
+                </button>
+
+                <button
+                  onClick={() => setActiveTab("assets")}
+                  className={`py-3.5 px-4 border-b-2 flex items-center gap-2 transition-colors shrink-0 ${
+                    activeTab === "assets"
+                      ? "border-brass text-brass"
+                      : "border-transparent text-muted hover:text-paper"
+                  }`}
+                >
+                  <ImageIcon className="w-4 h-4 text-amber-400" />
+                  <span>Asset Gallery ({mediaAssets.length})</span>
+                </button>
+
+                <button
+                  onClick={() => setActiveTab("analytics")}
+                  className={`py-3.5 px-4 border-b-2 flex items-center gap-2 transition-colors shrink-0 ${
+                    activeTab === "analytics"
+                      ? "border-brass text-brass"
+                      : "border-transparent text-muted hover:text-paper"
+                  }`}
+                >
+                  <PieChart className="w-4 h-4 text-teal" />
+                  <span>Bundle & Metrics</span>
+                </button>
+
+                <button
+                  onClick={() => setActiveTab("enterprise")}
+                  className={`py-3.5 px-4 border-b-2 flex items-center gap-2 transition-colors shrink-0 ${
+                    activeTab === "enterprise"
+                      ? "border-brass text-brass"
+                      : "border-transparent text-muted hover:text-paper"
+                  }`}
+                >
+                  <Building className="w-4 h-4 text-brass" />
+                  <span>Enterprise & Policies</span>
                 </button>
 
                 <button
@@ -1248,29 +1480,86 @@ function Home() {
                         {isUnpacking ? "Extracting..." : `${zipEntries.filter((e) => !e.isDir).length} files`}
                       </p>
                       <p className="text-xs text-muted mt-1">
-                        {isUnpacking
-                          ? "Processing package..."
-                          : `${(zipEntries.reduce((acc, f) => acc + f.size, 0) / 1024).toFixed(1)} KB unpacked source`}
+                        Total {bundleAnalytics.totalLOC.toLocaleString()} source lines across all modules
                       </p>
                     </div>
 
                     <div className="p-4 rounded-xl border border-line bg-surface2/50">
-                      <p className="text-[11px] font-mono uppercase text-muted">Security Score</p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="text-xl font-bold font-display text-paper">
-                          {isScanningSecurity ? "Scanning..." : securityScan ? `${securityScan.score}/100 (Grade ${securityScan.grade})` : `${permissionsList.length} Permissions`}
+                      <p className="text-[11px] font-mono uppercase text-muted">Security Health Grade</p>
+                      <div className="flex items-center gap-3 mt-1">
+                        <span
+                          className={`text-2xl font-black font-display px-2.5 py-0.5 rounded ${
+                            securityScan?.grade === "A+" || securityScan?.grade === "A"
+                              ? "bg-teal/20 text-teal border border-teal/40"
+                              : securityScan?.grade === "B" || securityScan?.grade === "C"
+                              ? "bg-amber-400/20 text-amber-400 border border-amber-400/40"
+                              : "bg-danger/20 text-danger border border-danger/40"
+                          }`}
+                        >
+                          {securityScan ? securityScan.grade : "A+"}
                         </span>
+                        <div>
+                          <p className="text-xs text-paper font-semibold">
+                            {securityScan?.grade === "A+" || securityScan?.grade === "A"
+                              ? "Clean Posture"
+                              : "Review Findings"}
+                          </p>
+                          <p className="text-[11px] text-muted font-mono">
+                            {securityScan ? `${securityScan.summary.critical + securityScan.summary.high} High-risk flags` : "Scanning..."}
+                          </p>
+                        </div>
                       </div>
-                      <p className="text-xs text-muted mt-1">
-                        {securityScan && securityScan.findings.length > 0 ? (
-                          <span className={securityScan.summary.critical > 0 || securityScan.summary.high > 0 ? "text-danger font-medium" : "text-amber-400 font-medium"}>
-                            {securityScan.findings.length} security finding(s) detected
-                          </span>
-                        ) : (
-                          <span className="text-teal font-medium">Clean audit profile</span>
-                        )}
-                      </p>
                     </div>
+                  </div>
+
+                  {/* Permissions Section */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-display font-semibold text-paper text-sm flex items-center gap-2">
+                        <Key className="w-4 h-4 text-brass" />
+                        <span>Declared Extension Permissions</span>
+                      </h3>
+                      <button
+                        onClick={() => setShowEncyclopedia(true)}
+                        className="text-xs text-brass hover:underline flex items-center gap-1 font-mono"
+                      >
+                        <BookOpen className="w-3 h-3" />
+                        <span>Open Permissions Encyclopedia</span>
+                      </button>
+                    </div>
+
+                    {manifestData?.permissions || manifestData?.host_permissions ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                        {[
+                          ...(manifestData.permissions || []),
+                          ...(manifestData.host_permissions || [])
+                        ].map((perm: string, idx: number) => {
+                          const detail = classifyPermission(perm);
+                          return (
+                            <div
+                              key={idx}
+                              className={`p-3 rounded-xl border text-xs font-mono space-y-1 transition-all ${
+                                detail.level === "high"
+                                  ? "border-danger/40 bg-danger/5 text-danger"
+                                  : detail.level === "medium"
+                                  ? "border-amber-400/30 bg-amber-400/5 text-amber-300"
+                                  : "border-line bg-surface2 text-paper"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between font-bold">
+                                <span className="truncate">{perm}</span>
+                                <span className="text-[9px] uppercase px-1.5 py-0.5 rounded border border-current">
+                                  {detail.level}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-muted font-sans line-clamp-2">{detail.description}</p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted font-mono">No declared API permissions (Zero-privilege extension).</p>
+                    )}
                   </div>
 
                   {/* Threat Intel & Deep Links */}
@@ -1279,7 +1568,11 @@ function Home() {
                       <p className="text-muted font-mono text-[11px]">Threat Intelligence & Store Lookups:</p>
                       <div className="flex items-center gap-3 font-mono flex-wrap">
                         <a
-                          href={`https://transparencyreport.google.com/safe-browsing/search?url=${encodeURIComponent(meta.id.length === 32 ? `https://chromewebstore.google.com/detail/${meta.id}` : `https://addons.mozilla.org/en-US/firefox/addon/${meta.id}/`)}`}
+                          href={`https://transparencyreport.google.com/safe-browsing/search?url=${encodeURIComponent(
+                            meta.id.length === 32
+                              ? `https://chromewebstore.google.com/detail/${meta.id}`
+                              : `https://addons.mozilla.org/en-US/firefox/addon/${meta.id}/`
+                          )}`}
                           target="_blank"
                           rel="noreferrer"
                           className="text-teal hover:underline flex items-center gap-1"
@@ -1299,7 +1592,11 @@ function Home() {
                           </a>
                         ) : null}
                         <a
-                          href={meta.id.length === 32 ? `https://chromewebstore.google.com/detail/${meta.id}` : `https://addons.mozilla.org/en-US/firefox/addon/${meta.id}/`}
+                          href={
+                            meta.id.length === 32
+                              ? `https://chromewebstore.google.com/detail/${meta.id}`
+                              : `https://addons.mozilla.org/en-US/firefox/addon/${meta.id}/`
+                          }
                           target="_blank"
                           rel="noreferrer"
                           className="text-paper hover:underline flex items-center gap-1"
@@ -1314,7 +1611,7 @@ function Home() {
                       <button
                         onClick={handleExportSecurityReport}
                         disabled={!securityScan}
-                        className="px-3 py-2 rounded-lg bg-surface border border-line text-paper hover:bg-surface2 transition-colors flex items-center gap-1.5 text-xs"
+                        className="px-3 py-2 rounded-lg bg-surface border border-line text-paper hover:bg-surface2 transition-colors flex items-center gap-1.5 text-xs font-mono"
                       >
                         <FileDown className="w-3.5 h-3.5 text-teal" />
                         <span>Export Audit (.md)</span>
@@ -1327,7 +1624,7 @@ function Home() {
                             if (firstCode) handleSelectFile(firstCode.path);
                           }
                         }}
-                        className="px-4 py-2 rounded-lg bg-brass text-ink font-semibold hover:bg-brassDim transition-colors flex items-center gap-1.5 text-xs"
+                        className="px-4 py-2 rounded-lg bg-brass text-ink font-semibold hover:bg-brassDim transition-colors flex items-center gap-1.5 text-xs font-mono"
                       >
                         <Code className="w-3.5 h-3.5" />
                         <span>Explore Source Code</span>
@@ -1337,12 +1634,11 @@ function Home() {
                 </div>
               )}
 
-              {/* Tab 2: Advanced Code Explorer with Beautifier & Resizer */}
+              {/* Tab 2: Code Explorer with Beautifier, Resizer & Live In-Memory Modifier */}
               {activeTab === "explorer" && (
                 <div className={`grid grid-cols-1 md:grid-cols-12 ${isFullscreenCode ? "fixed inset-0 z-50 bg-ink p-4" : "min-h-[560px]"}`}>
                   {/* Left Column: File Tree & Search */}
                   <div className="md:col-span-4 border-r border-line bg-surface2/30 flex flex-col">
-                    {/* Search & Mode Switcher */}
                     <div className="p-3 border-b border-line space-y-2">
                       <div className="relative">
                         <Search className="w-3.5 h-3.5 text-muted absolute left-2.5 top-2.5" />
@@ -1351,9 +1647,7 @@ function Home() {
                           value={fileSearch}
                           onChange={(e) => {
                             setFileSearch(e.target.value);
-                            if (searchMode === "content") {
-                              performContentSearch(e.target.value);
-                            }
+                            if (searchMode === "content") performContentSearch(e.target.value);
                           }}
                           placeholder={searchMode === "path" ? "Filter files by path..." : "Search inside all files..."}
                           className="w-full bg-surface border border-line rounded-md pl-8 pr-3 py-1.5 text-xs text-paper placeholder:text-muted/60 focus:outline-none focus:border-brass/70 font-mono"
@@ -1448,55 +1742,40 @@ function Home() {
                         </div>
                       ) : viewMode === "tree" ? (
                         <RenderTreeNodes
-                          nodes={treeNodes}
+                          nodes={filteredTreeNodes}
                           selectedFile={selectedFile}
                           expandedFolders={expandedFolders}
                           onToggleFolder={toggleFolder}
                           onSelectFile={handleSelectFile}
                         />
                       ) : (
-                        filteredEntries.map((entry) => {
-                          const isSelected = selectedFile === entry.path;
-                          const isCode = /\.(js|json|html|css|ts|jsx|tsx|md|txt)$/i.test(entry.name);
-                          const isImg = /\.(png|jpe?g|gif|svg|webp|ico)$/i.test(entry.name);
-
-                          if (entry.isDir) return null;
-
-                          return (
-                            <button
-                              key={entry.path}
-                              onClick={() => handleSelectFile(entry.path)}
-                              className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded text-xs font-mono transition-colors text-left ${
-                                isSelected
-                                  ? "bg-brass/20 text-brass border border-brass/30"
-                                  : "text-muted hover:text-paper hover:bg-surface"
-                              }`}
-                            >
-                              <div className="flex items-center gap-2 truncate min-w-0">
-                                {isCode ? (
-                                  <FileCode className="w-3.5 h-3.5 shrink-0 text-teal" />
-                                ) : isImg ? (
-                                  <FileText className="w-3.5 h-3.5 shrink-0 text-amber-400" />
-                                ) : (
-                                  <File className="w-3.5 h-3.5 shrink-0" />
-                                )}
+                        <div className="space-y-0.5">
+                          {zipEntries
+                            .filter((e) => !e.isDir)
+                            .map((entry) => (
+                              <button
+                                key={entry.path}
+                                onClick={() => handleSelectFile(entry.path)}
+                                className={`w-full text-left px-2.5 py-1.5 rounded text-xs font-mono truncate transition-colors flex items-center justify-between ${
+                                  selectedFile === entry.path
+                                    ? "bg-brass/20 text-brass border border-brass/30"
+                                    : "text-muted hover:text-paper hover:bg-surface/50"
+                                }`}
+                              >
                                 <span className="truncate">{entry.path}</span>
-                              </div>
-                              <span className="text-[10px] text-muted/60 shrink-0 font-mono">
-                                {(entry.size / 1024).toFixed(1)}k
-                              </span>
-                            </button>
-                          );
-                        })
+                                <span className="text-[10px] text-muted/60">{(entry.size / 1024).toFixed(1)}k</span>
+                              </button>
+                            ))}
+                        </div>
                       )}
                     </div>
                   </div>
 
-                  {/* Right Column: Code Viewer */}
-                  <div className="md:col-span-8 flex flex-col bg-ink/70">
+                  {/* Right Column: Code Viewer / Modifier */}
+                  <div className="md:col-span-8 flex flex-col bg-surface overflow-hidden">
                     {selectedFile ? (
                       <>
-                        <div className="p-3 border-b border-line flex items-center justify-between gap-2 bg-surface/90 flex-wrap">
+                        <div className="p-3 border-b border-line bg-surface2/60 flex items-center justify-between gap-2 flex-wrap">
                           <div className="flex items-center gap-2 min-w-0">
                             <span className="font-mono text-xs text-paper truncate font-medium">{selectedFile}</span>
                             {highlightLine && (
@@ -1504,16 +1783,41 @@ function Home() {
                                 Line {highlightLine}
                               </span>
                             )}
+                            {saveSuccessMsg && (
+                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-teal/20 text-teal border border-teal/40">
+                                Saved in memory!
+                              </span>
+                            )}
                           </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
+
+                          <div className="flex items-center gap-1.5 shrink-0 font-mono text-[11px]">
+                            {/* Live Edit Toggle */}
+                            <button
+                              onClick={() => setIsEditingFile(!isEditingFile)}
+                              className={`px-2 py-1 rounded border flex items-center gap-1 transition-colors ${
+                                isEditingFile ? "bg-brass text-ink border-brass" : "bg-surface border-line text-muted hover:text-paper"
+                              }`}
+                            >
+                              <Edit3 className="w-3 h-3" />
+                              <span>{isEditingFile ? "Editing" : "Edit"}</span>
+                            </button>
+
+                            {isEditingFile && (
+                              <button
+                                onClick={handleSaveModifiedFile}
+                                className="px-2.5 py-1 rounded bg-teal text-ink font-semibold flex items-center gap-1"
+                              >
+                                <Save className="w-3 h-3" />
+                                <span>Save</span>
+                              </button>
+                            )}
+
                             {/* Beautify Button */}
                             <button
                               onClick={() => setIsBeautified(!isBeautified)}
-                              title="Toggle JS/JSON Code Beautification"
-                              className={`px-2 py-1 rounded border text-[11px] font-mono flex items-center gap-1 transition-colors ${
-                                isBeautified
-                                  ? "bg-teal/20 text-teal border-teal/40"
-                                  : "bg-surface border-line text-muted hover:text-paper"
+                              disabled={isEditingFile}
+                              className={`px-2 py-1 rounded border flex items-center gap-1 transition-colors ${
+                                isBeautified ? "bg-teal/20 text-teal border-teal/40" : "bg-surface border-line text-muted hover:text-paper"
                               }`}
                             >
                               <Sparkles className="w-3 h-3 text-teal" />
@@ -1523,8 +1827,7 @@ function Home() {
                             {/* Wrap Button */}
                             <button
                               onClick={() => setWrapLines(!wrapLines)}
-                              title="Toggle Word Wrap"
-                              className={`px-2 py-1 rounded border text-[11px] font-mono flex items-center gap-1 ${
+                              className={`px-2 py-1 rounded border flex items-center gap-1 ${
                                 wrapLines ? "bg-brass/20 text-brass border-brass/40" : "bg-surface border-line text-muted hover:text-paper"
                               }`}
                             >
@@ -1535,8 +1838,7 @@ function Home() {
                             {/* Fullscreen Button */}
                             <button
                               onClick={() => setIsFullscreenCode(!isFullscreenCode)}
-                              title="Toggle Fullscreen"
-                              className="px-2 py-1 rounded bg-surface border border-line text-muted hover:text-paper text-[11px] font-mono flex items-center gap-1"
+                              className="px-2 py-1 rounded bg-surface border border-line text-muted hover:text-paper flex items-center gap-1"
                             >
                               {isFullscreenCode ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
                             </button>
@@ -1544,7 +1846,7 @@ function Home() {
                             {displayedCode && (
                               <button
                                 onClick={handleCopyCode}
-                                className="px-2.5 py-1 rounded bg-surface border border-line text-muted hover:text-paper text-[11px] font-mono flex items-center gap-1"
+                                className="px-2.5 py-1 rounded bg-surface border border-line text-muted hover:text-paper flex items-center gap-1"
                               >
                                 {copiedFile ? <Check className="w-3 h-3 text-teal" /> : <Copy className="w-3 h-3" />}
                                 <span>{copiedFile ? "Copied" : "Copy"}</span>
@@ -1553,7 +1855,7 @@ function Home() {
 
                             <button
                               onClick={() => handleDownloadSingleFile(selectedFile)}
-                              className="px-2.5 py-1 rounded bg-surface border border-line text-muted hover:text-paper text-[11px] font-mono flex items-center gap-1"
+                              className="px-2.5 py-1 rounded bg-surface border border-line text-muted hover:text-paper flex items-center gap-1"
                             >
                               <Download className="w-3 h-3" />
                               <span>Save</span>
@@ -1572,6 +1874,13 @@ function Home() {
                               />
                               <p className="mt-3 text-xs text-muted font-mono">{selectedFile}</p>
                             </div>
+                          ) : isEditingFile ? (
+                            <textarea
+                              value={editedCode}
+                              onChange={(e) => setEditedCode(e.target.value)}
+                              className="w-full h-[500px] bg-ink text-paper font-mono text-xs p-3 focus:outline-none resize-none border border-line rounded"
+                              spellCheck={false}
+                            />
                           ) : displayedCode !== null ? (
                             <CodeViewer
                               code={displayedCode}
@@ -1597,792 +1906,864 @@ function Home() {
                 </div>
               )}
 
-              {/* Tab 3: Security & Custom Rules Scanner */}
+              {/* Tab 3: Security, Hardcoded Secrets & Forensics */}
               {activeTab === "security" && (
                 <div className="p-6 space-y-6">
-                  {/* Security Score Banner */}
-                  <div className="p-5 rounded-2xl border border-line bg-surface2/50 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div className="flex items-center gap-4">
-                      <div
-                        className={`w-16 h-16 rounded-2xl flex flex-col items-center justify-center font-display font-bold border ${
-                          securityScan?.grade === "A+" || securityScan?.grade === "A"
-                            ? "bg-teal/20 text-teal border-teal/40"
-                            : securityScan?.grade === "B"
-                            ? "bg-amber-400/20 text-amber-400 border-amber-400/40"
-                            : "bg-danger/20 text-danger border-danger/40"
-                        }`}
-                      >
-                        <span className="text-2xl leading-none">{securityScan?.grade ?? "A"}</span>
-                        <span className="text-[10px] font-mono mt-1">{securityScan?.score ?? 100}/100</span>
-                      </div>
-                      <div>
-                        <h3 className="font-display text-base font-bold text-paper">
-                          Automated Security & Vulnerability Audit
-                        </h3>
-                        <p className="text-xs text-muted mt-0.5">
-                          Scanned {securityScan?.filesScanned ?? 0} files in {securityScan?.scanDurationMs ?? 0}ms across secrets, code sinks, CSP, and permissions.
-                        </p>
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={handleExportSecurityReport}
-                      className="focus-ring flex items-center gap-1.5 rounded-lg bg-teal px-4 py-2 text-xs font-semibold text-ink hover:bg-teal/90 transition-colors shadow-sm self-start md:self-auto"
-                    >
-                      <FileDown className="w-3.5 h-3.5" />
-                      <span>Download Audit Report (.md)</span>
-                    </button>
-                  </div>
-
-                  {/* Custom Security Rule Scanner */}
-                  <div className="p-5 rounded-2xl border border-brass/40 bg-brass/5 space-y-3">
+                  {/* Custom Regex Rule Scanner */}
+                  <div className="p-4 rounded-xl border border-line bg-surface2/40 space-y-3">
                     <div className="flex items-center justify-between">
-                      <h4 className="font-display text-sm font-bold text-paper flex items-center gap-2">
-                        <Sliders className="w-4 h-4 text-brass" />
-                        <span>Custom Security & Pattern Scanner</span>
-                      </h4>
-                      <span className="text-[11px] font-mono text-muted">Live Regex Engine</span>
+                      <p className="text-xs font-semibold text-paper font-mono flex items-center gap-1.5">
+                        <Sliders className="w-3.5 h-3.5 text-brass" />
+                        <span>Custom Regular Expression Code Auditor</span>
+                      </p>
+                      <span className="text-[10px] text-muted font-mono">Scan across all unpacked files</span>
                     </div>
 
-                    <p className="text-xs text-muted leading-relaxed">
-                      Enter a custom regex string or pattern to scan the entire extension package for internal endpoints, proprietary secrets, or custom indicators of compromise.
-                    </p>
-
-                    <div className="flex flex-col sm:flex-row gap-2">
+                    <div className="flex items-center gap-2">
                       <input
                         type="text"
                         value={customRuleInput}
                         onChange={(e) => setCustomRuleInput(e.target.value)}
-                        placeholder="e.g. api\.internal\.corp|bearer\s+[A-Za-z0-9\-_]+|wss?:\/\/"
-                        className="flex-1 bg-surface border border-line rounded-lg px-3 py-2 text-xs font-mono text-paper placeholder:text-muted/60 focus:outline-none focus:border-brass/70"
+                        placeholder="e.g. internal\.api\.com|AUTH_TOKEN|sk_live_[0-9a-zA-Z]+"
+                        className="flex-1 bg-surface border border-line rounded-lg px-3 py-2 text-xs font-mono text-paper placeholder:text-muted/60 focus:outline-none focus:border-brass"
                       />
                       <button
-                        onClick={() => runCustomRuleScan(customRuleInput)}
+                        onClick={runCustomRuleScan}
                         disabled={isScanningCustomRule || !customRuleInput.trim()}
-                        className="px-4 py-2 rounded-lg bg-brass text-ink font-semibold text-xs hover:bg-brassDim transition-colors shrink-0 disabled:opacity-40"
+                        className="px-4 py-2 rounded-lg bg-brass text-ink font-mono font-semibold text-xs hover:bg-brassDim disabled:opacity-50"
                       >
-                        {isScanningCustomRule ? "Scanning..." : "Run Custom Scan"}
+                        {isScanningCustomRule ? "Scanning..." : "Execute Scan"}
                       </button>
                     </div>
 
-                    {/* Custom Match Results */}
                     {customRuleMatches.length > 0 && (
-                      <div className="mt-3 p-3 rounded-xl bg-ink border border-line space-y-2">
-                        <p className="text-xs font-bold text-teal font-mono">
-                          Found {customRuleMatches.length} match(es) for &ldquo;{customRuleInput}&rdquo;:
+                      <div className="pt-2 space-y-1.5 max-h-48 overflow-y-auto">
+                        <p className="text-[11px] font-mono text-teal">
+                          Found {customRuleMatches.length} matching occurrences:
                         </p>
-                        <div className="space-y-1.5 max-h-[160px] overflow-y-auto">
-                          {customRuleMatches.map((m, idx) => (
-                            <button
-                              key={idx}
-                              onClick={() => {
-                                setActiveTab("explorer");
-                                handleSelectFile(m.file, m.line);
-                              }}
-                              className="w-full p-2 rounded text-left text-xs bg-surface border border-line hover:border-brass/40 transition-colors font-mono flex items-center justify-between gap-2"
-                            >
-                              <span className="truncate text-brass">{m.file}:{m.line}</span>
-                              <span className="truncate text-muted text-[11px]">{m.snippet}</span>
-                            </button>
-                          ))}
-                        </div>
+                        {customRuleMatches.map((m, idx) => (
+                          <div
+                            key={idx}
+                            onClick={() => {
+                              setActiveTab("explorer");
+                              handleSelectFile(m.file, m.line);
+                            }}
+                            className="p-2 rounded bg-surface border border-line hover:border-brass/40 cursor-pointer font-mono text-xs flex items-center justify-between gap-4"
+                          >
+                            <span className="text-paper truncate">
+                              {m.file}:{m.line}
+                            </span>
+                            <span className="text-muted text-[10px] truncate max-w-sm">{m.snippet}</span>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
 
-                  {/* Summary Counters */}
-                  {securityScan && (
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
-                      <div className="p-3 rounded-xl border border-danger/30 bg-danger/10">
-                        <span className="text-danger font-bold text-base">{securityScan.summary.critical}</span>
-                        <p className="text-danger/80 text-[11px] mt-0.5">Critical Risk</p>
-                      </div>
-                      <div className="p-3 rounded-xl border border-amber-400/30 bg-amber-400/10">
-                        <span className="text-amber-400 font-bold text-base">{securityScan.summary.high}</span>
-                        <p className="text-amber-400/80 text-[11px] mt-0.5">High Risk</p>
-                      </div>
-                      <div className="p-3 rounded-xl border border-line bg-surface2">
-                        <span className="text-paper font-bold text-base">{securityScan.summary.medium}</span>
-                        <p className="text-muted text-[11px] mt-0.5">Medium Risk</p>
-                      </div>
-                      <div className="p-3 rounded-xl border border-teal/30 bg-teal/10">
-                        <span className="text-teal font-bold text-base">{securityScan.summary.low}</span>
-                        <p className="text-teal/80 text-[11px] mt-0.5">Low / Informational</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Hardcoded Secrets */}
-                  {securityScan && securityScan.secrets.length > 0 && (
-                    <div className="space-y-3">
-                      <h4 className="font-display text-sm font-semibold text-paper flex items-center gap-2">
-                        <Key className="w-4 h-4 text-danger" />
-                        <span>Hardcoded Secrets & Leaked Credentials ({securityScan.secrets.length})</span>
-                      </h4>
-                      <div className="space-y-2">
-                        {securityScan.secrets.map((finding) => (
-                          <div key={finding.id} className="p-4 rounded-xl border border-danger/40 bg-danger/10 text-xs">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="font-bold text-danger font-mono">{finding.title}</span>
-                              <span className="px-1.5 py-0.5 rounded bg-danger/20 text-danger text-[10px] font-mono uppercase font-bold border border-danger/30">
-                                {finding.severity}
-                              </span>
-                            </div>
-                            <p className="text-muted mt-1">{finding.description}</p>
-                            {finding.file && (
-                              <button
-                                onClick={() => {
-                                  setActiveTab("explorer");
-                                  handleSelectFile(finding.file!, finding.line);
-                                }}
-                                className="mt-2 text-brass hover:underline font-mono text-[11px] flex items-center gap-1"
-                              >
-                                <span>Jump to {finding.file}:{finding.line}</span>
-                                <ChevronRight className="w-3 h-3" />
-                              </button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Hazardous Code Sinks */}
-                  {securityScan && securityScan.codeVulnerabilities.length > 0 && (
-                    <div className="space-y-3">
-                      <h4 className="font-display text-sm font-semibold text-paper flex items-center gap-2">
-                        <Lock className="w-4 h-4 text-amber-400" />
-                        <span>Dangerous JavaScript Sinks & APIs ({securityScan.codeVulnerabilities.length})</span>
-                      </h4>
-                      <div className="space-y-2">
-                        {securityScan.codeVulnerabilities.map((finding) => (
-                          <div key={finding.id} className="p-4 rounded-xl border border-line bg-surface2/40 text-xs">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="font-bold text-paper font-mono">{finding.title}</span>
-                              <span className="px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-400 text-[10px] font-mono uppercase font-bold border border-amber-400/30">
-                                {finding.severity}
-                              </span>
-                            </div>
-                            <p className="text-muted mt-1 leading-relaxed">{finding.description}</p>
-                            {finding.snippet && (
-                              <code className="block mt-2 p-2 rounded bg-ink font-mono text-[11px] text-teal break-all border border-line">
-                                {finding.snippet}
-                              </code>
-                            )}
-                            {finding.file && (
-                              <button
-                                onClick={() => {
-                                  setActiveTab("explorer");
-                                  handleSelectFile(finding.file!, finding.line);
-                                }}
-                                className="mt-2 text-brass hover:underline font-mono text-[11px] flex items-center gap-1"
-                              >
-                                <span>Inspect in Code Explorer ({finding.file}:{finding.line})</span>
-                                <ChevronRight className="w-3 h-3" />
-                              </button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Declared Permissions */}
+                  {/* Shannon Entropy & Obfuscation Analysis */}
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <h4 className="font-display text-sm font-semibold text-paper flex items-center gap-2">
-                        <Shield className="w-4 h-4 text-brass" />
-                        <span>Declared Permissions & Attack Surface ({permissionsList.length})</span>
-                      </h4>
-                      <button
-                        onClick={() => setShowEncyclopedia(true)}
-                        className="text-teal hover:underline text-xs font-mono flex items-center gap-1"
-                      >
-                        <BookOpen className="w-3 h-3" />
-                        <span>View Encyclopedia</span>
-                      </button>
-                    </div>
+                    <h3 className="text-sm font-semibold text-paper font-display flex items-center gap-2">
+                      <Cpu className="w-4 h-4 text-amber-400" />
+                      <span>Script Entropy & Obfuscation Detector</span>
+                    </h3>
 
-                    {permissionsList.length === 0 ? (
-                      <div className="p-4 rounded-xl border border-teal/30 bg-teal/10 text-teal text-xs flex items-center gap-2">
-                        <ShieldCheck className="w-4 h-4" />
-                        <span>Zero permissions requested. This extension runs with minimal attack surface.</span>
+                    {obfuscationFindings.length > 0 ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {obfuscationFindings.map((ob, idx) => (
+                          <div
+                            key={idx}
+                            onClick={() => {
+                              setActiveTab("explorer");
+                              handleSelectFile(ob.file);
+                            }}
+                            className="p-3.5 rounded-xl border border-line bg-surface2/40 cursor-pointer hover:border-brass/40 transition-colors space-y-1"
+                          >
+                            <div className="flex items-center justify-between text-xs font-mono">
+                              <span className="font-bold text-paper truncate">{ob.file}</span>
+                              <span className="text-brass font-semibold">{ob.entropy} bits/char</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                              {ob.indicators.map((ind, i) => (
+                                <span key={i} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-surface border border-line text-muted">
+                                  {ind}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     ) : (
-                      <div className="grid grid-cols-1 gap-2.5">
-                        {permissionsList.map((perm) => (
+                      <p className="text-xs text-muted font-mono">No suspicious obfuscation or packed eval scripts detected.</p>
+                    )}
+                  </div>
+
+                  {/* Privacy & Hardware APIs */}
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold text-paper font-display flex items-center gap-2">
+                      <Radio className="w-4 h-4 text-teal" />
+                      <span>Hardware & Privacy API Calls</span>
+                    </h3>
+
+                    {privacyApis.length > 0 ? (
+                      <div className="space-y-2">
+                        {privacyApis.map((p, idx) => (
                           <div
-                            key={perm.name}
-                            className="p-3.5 rounded-xl border border-line bg-surface2/40 flex items-start gap-3"
+                            key={idx}
+                            onClick={() => {
+                              setActiveTab("explorer");
+                              handleSelectFile(p.file, p.line);
+                            }}
+                            className="p-3 rounded-xl border border-line bg-surface2/40 cursor-pointer hover:border-brass/40 flex items-center justify-between gap-4 font-mono text-xs"
                           >
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-mono uppercase font-bold shrink-0 mt-0.5 border ${
-                                perm.level === "high"
-                                  ? "bg-danger/15 text-danger border-danger/30"
-                                  : perm.level === "medium"
-                                  ? "bg-amber-400/15 text-amber-400 border-amber-400/30"
-                                  : "bg-teal/15 text-teal border-teal/30"
-                              }`}
-                            >
-                              {perm.level}
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              <p className="font-mono text-xs font-semibold text-paper">{perm.name}</p>
-                              <p className="text-xs text-muted mt-0.5 leading-relaxed">{perm.description}</p>
+                            <div className="space-y-0.5">
+                              <div className="flex items-center gap-2">
+                                <span className="text-danger font-bold">{p.api}</span>
+                                <span className="text-muted text-[11px]">&bull;</span>
+                                <span className="text-paper">{p.file}:{p.line}</span>
+                              </div>
+                              <p className="text-[11px] text-muted font-sans">{p.threat}</p>
                             </div>
+                            <code className="text-[10px] text-amber-300 bg-surface px-2 py-1 rounded border border-line shrink-0">
+                              {p.symbol}
+                            </code>
                           </div>
                         ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted font-mono">No camera, microphone, WebRTC, or geolocation APIs called.</p>
+                    )}
+                  </div>
+
+                  {/* Local Storage & Cookie Forensics */}
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold text-paper font-display flex items-center gap-2">
+                      <Database className="w-4 h-4 text-brass" />
+                      <span>Storage & Cookie Key Forensics</span>
+                    </h3>
+
+                    {storageForensics.length > 0 ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                        {storageForensics.map((sf, idx) => (
+                          <div
+                            key={idx}
+                            onClick={() => {
+                              setActiveTab("explorer");
+                              handleSelectFile(sf.file, sf.line);
+                            }}
+                            className="p-2.5 rounded-lg border border-line bg-surface2/30 cursor-pointer hover:border-brass/40 font-mono text-xs space-y-0.5"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-teal font-bold truncate">{sf.key}</span>
+                              <span className="text-[9px] text-muted uppercase">{sf.type}</span>
+                            </div>
+                            <p className="text-[10px] text-muted truncate">{sf.file}:{sf.line}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted font-mono">No direct storage key access detected.</p>
+                    )}
+                  </div>
+
+                  {/* Automated Security Findings */}
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold text-paper font-display flex items-center gap-2">
+                      <Shield className="w-4 h-4 text-brass" />
+                      <span>Automated Security Findings ({securityScan ? securityScan.findings.length : 0})</span>
+                    </h3>
+
+                    {securityScan && securityScan.findings.length > 0 ? (
+                      <div className="space-y-2.5">
+                        {securityScan.findings.map((f, idx) => (
+                          <div
+                            key={idx}
+                            onClick={() => {
+                              if (f.file) {
+                                setActiveTab("explorer");
+                                handleSelectFile(f.file, f.line);
+                              }
+                            }}
+                            className={`p-3.5 rounded-xl border text-xs cursor-pointer transition-all ${
+                              f.severity === "critical"
+                                ? "border-danger/40 bg-danger/10 text-danger hover:border-danger"
+                                : f.severity === "high"
+                                ? "border-danger/30 bg-danger/5 text-danger hover:border-danger"
+                                : f.severity === "medium"
+                                ? "border-amber-400/30 bg-amber-400/5 text-amber-300 hover:border-amber-400"
+                                : "border-line bg-surface2 text-paper hover:border-brass/40"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2 font-mono">
+                              <span className="font-bold">{f.title}</span>
+                              <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded border border-current">
+                                {f.severity}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-muted font-sans mt-1 leading-relaxed">{f.description}</p>
+                            {f.file && (
+                              <p className="text-[10px] font-mono text-muted/80 mt-1.5">
+                                Source: {f.file}{f.line ? `:${f.line}` : ""}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="p-6 rounded-xl border border-line bg-surface2/30 text-center font-mono text-xs text-teal">
+                        ✓ No critical vulnerabilities or secret leaks detected.
                       </div>
                     )}
                   </div>
                 </div>
               )}
 
-              {/* Tab 4: Network Endpoints & Telemetry Harvester */}
-              {activeTab === "network" && (
+              {/* Tab 4: Content Security Policy & Attack Surface */}
+              {activeTab === "csp" && (
                 <div className="p-6 space-y-6">
-                  <div>
-                    <h3 className="font-display text-base font-bold text-paper flex items-center gap-2">
-                      <Radio className="w-4 h-4 text-teal" />
-                      <span>Network Endpoints & External Domain Harvester</span>
+                  {/* CSP Evaluator Card */}
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold text-paper font-display flex items-center gap-2">
+                      <Lock className="w-4 h-4 text-brass" />
+                      <span>Content Security Policy (CSP) Evaluator</span>
                     </h3>
-                    <p className="text-xs text-muted mt-1 leading-relaxed">
-                      Every external URL, telemetry tracker, WebSocket endpoint, and API server discovered in the extension source code.
-                    </p>
-                  </div>
 
-                  {networkHarvest && (
-                    <div className="space-y-6">
-                      {/* Top Contacted Domains */}
-                      <div className="p-4 rounded-2xl border border-line bg-surface2/40 space-y-3">
-                        <h4 className="font-display text-xs font-mono font-bold text-brass uppercase">
-                          Discovered External Domains ({networkHarvest.uniqueDomains.length})
-                        </h4>
-                        <div className="flex flex-wrap gap-1.5">
-                          {networkHarvest.domainsByCount.map((d) => (
-                            <span
-                              key={d.domain}
-                              className="px-2.5 py-1 rounded-lg border border-line bg-surface text-xs font-mono flex items-center gap-1.5"
-                            >
-                              <Globe className="w-3 h-3 text-teal shrink-0" />
-                              <span className="text-paper">{d.domain}</span>
-                              <span className="px-1.5 py-0.2 rounded-full bg-surface2 text-muted text-[10px] font-bold">
-                                {d.count}
-                              </span>
-                            </span>
+                    {cspReport ? (
+                      <div className="p-4 rounded-xl border border-line bg-surface2/40 space-y-3">
+                        <div className="flex items-center justify-between font-mono text-xs">
+                          <span className="text-muted">CSP Format: {cspReport.isMV3 ? "MV3 Dictionary Object" : "MV2 String"}</span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
+                              cspReport.overallRisk === "high"
+                                ? "bg-danger/20 text-danger border border-danger/30"
+                                : cspReport.overallRisk === "medium"
+                                ? "bg-amber-400/20 text-amber-400 border border-amber-400/30"
+                                : "bg-teal/20 text-teal border border-teal/30"
+                            }`}
+                          >
+                            {cspReport.overallRisk} Risk
+                          </span>
+                        </div>
+
+                        <div className="space-y-2">
+                          {cspReport.directives.map((dir, idx) => (
+                            <div key={idx} className="p-2.5 rounded bg-surface border border-line font-mono text-xs space-y-1">
+                              <div className="flex items-center justify-between">
+                                <span className="text-brass font-bold">{dir.name}</span>
+                                <span className="text-[10px] text-muted">{dir.risk}</span>
+                              </div>
+                              <p className="text-[11px] text-paper truncate">{dir.values.join(" ")}</p>
+                              {dir.reason && <p className="text-[10px] text-danger">{dir.reason}</p>}
+                            </div>
                           ))}
                         </div>
                       </div>
+                    ) : (
+                      <p className="text-xs text-muted font-mono">No explicit CSP declared (Default Chromium sandbox applied).</p>
+                    )}
+                  </div>
 
-                      {/* Filterable Endpoints Table */}
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between gap-4 flex-wrap">
-                          <h4 className="font-display text-sm font-semibold text-paper">
-                            Discovered URLs & Endpoints ({filteredNetworkEndpoints.length})
-                          </h4>
-                          <div className="relative w-64">
-                            <Search className="w-3.5 h-3.5 text-muted absolute left-2.5 top-2.5" />
-                            <input
-                              type="text"
-                              value={networkFilter}
-                              onChange={(e) => setNetworkFilter(e.target.value)}
-                              placeholder="Filter URLs or domains..."
-                              className="w-full bg-surface border border-line rounded-md pl-8 pr-3 py-1.5 text-xs text-paper placeholder:text-muted/60 focus:outline-none focus:border-brass/70 font-mono"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="border border-line rounded-xl overflow-hidden">
-                          <div className="overflow-x-auto max-h-[440px]">
-                            <table className="w-full text-left text-xs font-mono">
-                              <thead className="bg-surface2/70 text-muted uppercase text-[10px] border-b border-line sticky top-0">
-                                <tr>
-                                  <th className="p-3">Protocol</th>
-                                  <th className="p-3">Endpoint URL</th>
-                                  <th className="p-3">File Location</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-line/40">
-                                {filteredNetworkEndpoints.map((ep, idx) => (
-                                  <tr key={idx} className="hover:bg-surface2/40 transition-colors">
-                                    <td className="p-3 shrink-0">
-                                      <span
-                                        className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold ${
-                                          ep.protocol === "https" || ep.protocol === "wss"
-                                            ? "bg-teal/20 text-teal"
-                                            : "bg-danger/20 text-danger"
-                                        }`}
-                                      >
-                                        {ep.protocol}
-                                      </span>
-                                    </td>
-                                    <td className="p-3 text-paper break-all select-all font-semibold max-w-md">
-                                      {ep.url}
-                                    </td>
-                                    <td className="p-3 text-muted shrink-0">
-                                      <button
-                                        onClick={() => {
-                                          setActiveTab("explorer");
-                                          handleSelectFile(ep.file, ep.line);
-                                        }}
-                                        className="text-brass hover:underline flex items-center gap-1"
-                                      >
-                                        <span>{ep.file}:{ep.line}</span>
-                                        <ChevronRight className="w-3 h-3" />
-                                      </button>
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Tab 5: CRX Package Diff & Version Comparison */}
-              {activeTab === "diff" && (
-                <div className="p-6 space-y-6">
-                  <div>
-                    <h3 className="font-display text-base font-bold text-paper flex items-center gap-2">
-                      <GitCompare className="w-4 h-4 text-teal" />
-                      <span>CRX Package Version Diff & Supply Chain Auditor</span>
+                  {/* Content Scripts Map */}
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold text-paper font-display flex items-center gap-2">
+                      <FileCode className="w-4 h-4 text-teal" />
+                      <span>Injected Content Scripts ({contentScripts.length})</span>
                     </h3>
-                    <p className="text-xs text-muted mt-1 leading-relaxed">
-                      Compare the currently loaded extension against a newer/older version to detect rogue permission escalations, modified background scripts, and supply chain alterations.
-                    </p>
-                  </div>
 
-                  {/* Package B Upload Card */}
-                  <div className="p-6 rounded-2xl border-2 border-dashed border-line bg-surface2/30 flex flex-col items-center justify-center text-center">
-                    <UploadCloud className="w-10 h-10 text-teal mb-2" />
-                    <p className="text-sm font-semibold text-paper">Select or Drop Version B (.crx / .xpi / .zip)</p>
-                    <p className="text-xs text-muted mt-1 max-w-sm">
-                      Upload the second package to compute file additions, deletions, code diffs, and permission shifts.
-                    </p>
-
-                    <label className="mt-4 px-4 py-2 rounded-lg bg-teal text-ink font-semibold text-xs hover:bg-teal/90 transition-colors cursor-pointer">
-                      <span>Choose Package B</span>
-                      <input
-                        type="file"
-                        accept=".crx,.zip,.xpi"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) handleUploadPackageB(file);
-                        }}
-                      />
-                    </label>
-                  </div>
-
-                  {/* Diff Results Interface */}
-                  {diffResult && (
-                    <div className="space-y-6">
-                      {/* Summary Cards */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
-                        <div className="p-3 rounded-xl border border-teal/30 bg-teal/10">
-                          <span className="text-teal font-bold text-base">+{diffResult.summary.addedFiles}</span>
-                          <p className="text-teal/80 text-[11px] mt-0.5">Added Files</p>
-                        </div>
-                        <div className="p-3 rounded-xl border border-danger/30 bg-danger/10">
-                          <span className="text-danger font-bold text-base">-{diffResult.summary.removedFiles}</span>
-                          <p className="text-danger/80 text-[11px] mt-0.5">Removed Files</p>
-                        </div>
-                        <div className="p-3 rounded-xl border border-amber-400/30 bg-amber-400/10">
-                          <span className="text-amber-400 font-bold text-base">~{diffResult.summary.modifiedFiles}</span>
-                          <p className="text-amber-400/80 text-[11px] mt-0.5">Modified Files</p>
-                        </div>
-                        <div className="p-3 rounded-xl border border-line bg-surface2">
-                          <span className="text-paper font-bold text-base">{diffResult.summary.unchangedFiles}</span>
-                          <p className="text-muted text-[11px] mt-0.5">Unchanged Files</p>
-                        </div>
+                    {contentScripts.length > 0 ? (
+                      <div className="space-y-2.5">
+                        {contentScripts.map((cs, idx) => (
+                          <div key={idx} className="p-3.5 rounded-xl border border-line bg-surface2/40 space-y-2 font-mono text-xs">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-brass font-bold">Matches: {cs.matches.join(", ")}</span>
+                              <span className="text-[10px] text-muted bg-surface px-2 py-0.5 rounded border border-line">
+                                Run at: {cs.runAt}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-muted flex items-center gap-4 flex-wrap">
+                              <span>Scripts: {cs.js?.join(", ") || "None"}</span>
+                              <span>Styles: {cs.css?.join(", ") || "None"}</span>
+                              <span>All Frames: {cs.allFrames ? "Yes" : "No"}</span>
+                            </div>
+                          </div>
+                        ))}
                       </div>
+                    ) : (
+                      <p className="text-xs text-muted font-mono">No content scripts injected into web pages.</p>
+                    )}
+                  </div>
 
-                      {/* Permission Changes Alert */}
-                      {(diffResult.permissionChanges.added.length > 0 || diffResult.permissionChanges.removed.length > 0) && (
-                        <div className="p-4 rounded-xl border border-amber-400/40 bg-amber-400/10 space-y-2">
-                          <h4 className="font-display text-sm font-bold text-amber-300">Permission Escalations & Changes</h4>
-                          {diffResult.permissionChanges.added.length > 0 && (
-                            <div className="text-xs font-mono text-teal">
-                              <strong>Added Permissions:</strong> {diffResult.permissionChanges.added.join(", ")}
-                            </div>
-                          )}
-                          {diffResult.permissionChanges.removed.length > 0 && (
-                            <div className="text-xs font-mono text-danger">
-                              <strong>Removed Permissions:</strong> {diffResult.permissionChanges.removed.join(", ")}
-                            </div>
-                          )}
-                        </div>
-                      )}
+                  {/* Web Accessible Resources */}
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold text-paper font-display flex items-center gap-2">
+                      <Globe className="w-4 h-4 text-amber-400" />
+                      <span>Web Accessible Resources (WAR)</span>
+                    </h3>
 
-                      {/* Side-by-Side Diff Viewer */}
-                      <div className="grid grid-cols-1 md:grid-cols-12 min-h-[440px] border border-line rounded-xl overflow-hidden">
-                        {/* File Changes List */}
-                        <div className="md:col-span-4 border-r border-line bg-surface2/30 p-2 overflow-y-auto max-h-[480px] space-y-1">
-                          <p className="text-[11px] font-mono text-muted uppercase px-2 py-1">Changed Files</p>
-                          {diffResult.fileChanges.map((file) => {
-                            const isSelected = selectedDiffFile === file.path;
-                            return (
-                              <button
-                                key={file.path}
-                                onClick={() => handleSelectDiffFile(file.path)}
-                                className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded text-xs font-mono transition-colors text-left ${
-                                  isSelected
-                                    ? "bg-brass/20 text-brass border border-brass/40"
-                                    : "text-muted hover:text-paper hover:bg-surface"
-                                }`}
-                              >
-                                <span className="truncate">{file.path}</span>
-                                <span
-                                  className={`text-[10px] font-bold uppercase px-1.5 py-0.2 rounded ${
-                                    file.status === "added"
-                                      ? "bg-teal/20 text-teal"
-                                      : file.status === "removed"
-                                      ? "bg-danger/20 text-danger"
-                                      : file.status === "modified"
-                                      ? "bg-amber-400/20 text-amber-400"
-                                      : "text-muted/60"
-                                  }`}
-                                >
-                                  {file.status}
+                    {warEntries.length > 0 ? (
+                      <div className="space-y-2">
+                        {warEntries.map((war, idx) => (
+                          <div key={idx} className="p-3 rounded-xl border border-line bg-surface2/40 font-mono text-xs space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-paper truncate">Files: {war.resources.join(", ")}</span>
+                              {war.isWildcard && (
+                                <span className="text-[10px] bg-danger/20 text-danger border border-danger/30 px-1.5 py-0.5 rounded">
+                                  Wildcard Exposed
                                 </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-
-                        {/* Visual Code Diff View */}
-                        <div className="md:col-span-8 bg-ink/70 flex flex-col">
-                          <div className="p-3 border-b border-line bg-surface flex items-center justify-between text-xs font-mono">
-                            <span className="text-paper font-semibold truncate">{selectedDiffFile ?? "Select a file to inspect diff"}</span>
-                            <div className="flex items-center gap-2 text-[11px] text-muted">
-                              <span className="text-teal font-bold">+ Added</span>
-                              <span className="text-danger font-bold">- Removed</span>
+                              )}
                             </div>
+                            <p className="text-[10px] text-muted">Accessible by: {war.matches?.join(", ") || "Any origin"}</p>
                           </div>
-
-                          <div className="flex-1 overflow-auto max-h-[480px] p-2 bg-ink/50 font-mono text-xs">
-                            {diffLines && selectedDiffFile ? (
-                              <DiffCodeViewer diffLines={diffLines} filename={selectedDiffFile} />
-                            ) : (
-                              <div className="p-8 text-center text-xs text-muted">Select a file from the list to view line-by-line diff.</div>
-                            )}
-                          </div>
-                        </div>
+                        ))}
                       </div>
+                    ) : (
+                      <p className="text-xs text-muted font-mono">No resources exposed to external web pages.</p>
+                    )}
+                  </div>
+
+                  {/* Externally Connectable & Native Messaging */}
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold text-paper font-display flex items-center gap-2">
+                      <Terminal className="w-4 h-4 text-brass" />
+                      <span>External Messaging & Native Host Privileges</span>
+                    </h3>
+
+                    <div className="p-4 rounded-xl border border-line bg-surface2/40 font-mono text-xs space-y-2">
+                      <p className="text-paper">{externalMessaging.threatSummary}</p>
+                      {externalMessaging.matches.length > 0 && (
+                        <p className="text-[11px] text-muted">Allowed Domains: {externalMessaging.matches.join(", ")}</p>
+                      )}
+                      {externalMessaging.hasNativeMessaging && (
+                        <p className="text-[11px] text-danger">⚠️ Extension has nativeMessaging permission to run local OS binaries.</p>
+                      )}
                     </div>
-                  )}
+                  </div>
                 </div>
               )}
 
-              {/* Tab 6: Manifest V3 Migration & Health */}
-              {activeTab === "mv3" && (
+              {/* Tab 5: Network Endpoints & Telemetry Harvester */}
+              {activeTab === "network" && (
                 <div className="p-6 space-y-6">
-                  <div className="p-5 rounded-2xl border border-line bg-surface2/50 flex items-center justify-between gap-4 flex-wrap">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                     <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-display text-lg font-bold text-paper">Manifest V3 Migration Score</span>
-                        <span
-                          className={`text-xs font-mono font-bold px-2 py-0.5 rounded border ${
-                            mv3Check?.isMV3 ? "bg-teal/20 text-teal border-teal/30" : "bg-amber-400/20 text-amber-400 border-amber-400/30"
-                          }`}
-                        >
-                          {mv3Check?.isMV3 ? "MV3 Certified" : "MV2 Legacy"}
-                        </span>
-                      </div>
-                      <p className="text-xs text-muted mt-1">
-                        Compliance with modern Chromium extension standards and service worker architectures.
+                      <h3 className="font-display font-semibold text-paper text-sm flex items-center gap-2">
+                        <Radio className="w-4 h-4 text-teal" />
+                        <span>Harvested Network Endpoints & Domains</span>
+                      </h3>
+                      <p className="text-xs text-muted mt-0.5">
+                        Extracted {networkHarvest ? networkHarvest.endpoints.length : 0} external URLs across all scripts.
                       </p>
                     </div>
 
-                    <div className="text-right">
-                      <span className="text-3xl font-display font-bold text-paper">{mv3Check?.score ?? 100}</span>
-                      <span className="text-xs text-muted font-mono"> / 100</span>
-                    </div>
+                    <input
+                      type="text"
+                      value={networkFilter}
+                      onChange={(e) => setNetworkFilter(e.target.value)}
+                      placeholder="Filter domain or URL..."
+                      className="bg-surface border border-line rounded-lg px-3 py-1.5 text-xs text-paper placeholder:text-muted/60 focus:outline-none focus:border-brass font-mono w-full sm:w-64"
+                    />
                   </div>
 
-                  {mv3Check && mv3Check.issues.length > 0 ? (
-                    <div className="space-y-3">
-                      <h4 className="font-display text-sm font-semibold text-paper">Required MV3 Migration Changes</h4>
-                      <div className="space-y-2">
-                        {mv3Check.issues.map((issue, i) => (
-                          <div key={i} className="p-4 rounded-xl border border-amber-400/30 bg-amber-400/10 text-xs">
-                            <p className="font-mono font-bold text-amber-300">{issue.field}</p>
-                            <p className="text-muted mt-1">{issue.description}</p>
-                            <div className="mt-2 p-2 rounded bg-ink font-mono text-[11px] text-teal border border-line">
-                              <strong>Remedy:</strong> {issue.remedy}
-                            </div>
-                          </div>
+                  {/* Unique Domains Chips */}
+                  {networkHarvest && networkHarvest.uniqueDomains.length > 0 && (
+                    <div className="p-4 rounded-xl border border-line bg-surface2/40 space-y-2">
+                      <p className="text-[11px] font-mono text-muted uppercase">
+                        Discovered External Domains ({networkHarvest.uniqueDomains.length})
+                      </p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {networkHarvest.uniqueDomains.map((dom, i) => (
+                          <span
+                            key={i}
+                            onClick={() => setNetworkFilter(dom)}
+                            className="px-2.5 py-1 rounded-md bg-surface border border-line text-brass hover:border-brass cursor-pointer font-mono text-xs transition-colors"
+                          >
+                            {dom}
+                          </span>
                         ))}
                       </div>
                     </div>
-                  ) : (
-                    <div className="p-6 rounded-2xl border border-teal/30 bg-teal/10 text-teal text-center text-xs">
-                      <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-teal" />
-                      <p className="font-bold text-sm">100% Manifest V3 Compliant</p>
-                      <p className="text-muted mt-1">This package utilizes modern Manifest V3 directives with no legacy MV2 bottlenecks.</p>
-                    </div>
                   )}
 
-                  {/* Formatted Manifest Inspector */}
-                  <div className="border-t border-line pt-6">
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="font-display text-sm font-semibold text-paper">Resolved manifest.json</h4>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={handleCopyManifestJson}
-                          className="px-2.5 py-1 rounded bg-surface border border-line text-muted hover:text-paper text-[11px] font-mono flex items-center gap-1"
-                        >
-                          {copiedManifest ? <Check className="w-3 h-3 text-teal" /> : <Copy className="w-3 h-3" />}
-                          <span>{copiedManifest ? "Copied" : "Copy JSON"}</span>
-                        </button>
-                        <button
-                          onClick={handleDownloadManifest}
-                          className="px-2.5 py-1 rounded bg-surface border border-line text-muted hover:text-paper text-[11px] font-mono flex items-center gap-1"
-                        >
-                          <Download className="w-3 h-3" />
-                          <span>Download</span>
-                        </button>
-                      </div>
+                  {/* Endpoints Table */}
+                  <div className="border border-line rounded-xl overflow-hidden">
+                    <div className="max-h-[440px] overflow-y-auto">
+                      {filteredNetworkEndpoints.length > 0 ? (
+                        <table className="w-full text-left border-collapse text-xs font-mono">
+                          <thead>
+                            <tr className="bg-surface2 border-b border-line text-muted text-[11px]">
+                              <th className="p-3">Protocol</th>
+                              <th className="p-3">Domain / Host</th>
+                              <th className="p-3">Full URL</th>
+                              <th className="p-3">Source File</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-line">
+                            {filteredNetworkEndpoints.map((ep, idx) => (
+                              <tr key={idx} className="hover:bg-surface2/50 transition-colors">
+                                <td className="p-3 font-semibold text-teal">{ep.protocol.toUpperCase()}</td>
+                                <td className="p-3 text-paper font-bold">{ep.domain}</td>
+                                <td className="p-3 text-muted truncate max-w-xs">{ep.url}</td>
+                                <td className="p-3">
+                                  <button
+                                    onClick={() => {
+                                      setActiveTab("explorer");
+                                      handleSelectFile(ep.file, ep.line);
+                                    }}
+                                    className="text-brass hover:underline truncate max-w-[160px] text-left"
+                                  >
+                                    {ep.file}:{ep.line}
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : (
+                        <div className="p-8 text-center text-xs text-muted font-mono">
+                          No external HTTP/HTTPS/WSS network endpoints found in scripts.
+                        </div>
+                      )}
                     </div>
-                    <pre className="p-4 rounded-xl bg-ink border border-line font-mono text-xs text-paper/90 overflow-x-auto max-h-[300px] leading-relaxed">
-                      {JSON.stringify(manifestData, null, 2)}
-                    </pre>
                   </div>
                 </div>
               )}
-            </motion.div>
-          )}
-        </AnimatePresence>
 
-        {status !== "idle" && (
-          <div className="mt-6 text-center">
-            <button
-              onClick={reset}
-              className="focus-ring px-3 py-1.5 rounded-lg border border-line text-xs font-mono text-muted transition-colors hover:text-paper hover:bg-surface"
-            >
-              ← Clear and start over
-            </button>
-          </div>
+              {/* Tab 6: Media & Icon Asset Gallery */}
+              {activeTab === "assets" && (
+                <div className="p-6 space-y-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-display font-semibold text-paper text-sm flex items-center gap-2">
+                        <ImageIcon className="w-4 h-4 text-amber-400" />
+                        <span>Visual Asset & Icon Gallery</span>
+                      </h3>
+                      <p className="text-xs text-muted mt-0.5">
+                        Preview all {mediaAssets.length} image and SVG assets embedded in the package.
+                      </p>
+                    </div>
+                  </div>
+
+                  {mediaAssets.length > 0 ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                      {mediaAssets.map((asset, idx) => (
+                        <div
+                          key={idx}
+                          className="p-3 rounded-xl border border-line bg-surface2/40 flex flex-col items-center justify-between gap-2 hover:border-brass/40 transition-colors group"
+                        >
+                          <div className="w-20 h-20 flex items-center justify-center p-2 rounded bg-surface border border-line">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={asset.url} alt={asset.name} className="max-w-full max-h-full object-contain" />
+                          </div>
+                          <div className="text-center w-full">
+                            <p className="text-[11px] font-mono font-medium text-paper truncate">{asset.name}</p>
+                            <p className="text-[9px] font-mono text-muted">{(asset.size / 1024).toFixed(1)} KB</p>
+                          </div>
+                          <button
+                            onClick={() => handleDownloadSingleFile(asset.path)}
+                            className="w-full py-1 text-[10px] font-mono rounded bg-surface border border-line text-muted group-hover:text-paper group-hover:border-brass/40 flex items-center justify-center gap-1"
+                          >
+                            <Download className="w-3 h-3" />
+                            <span>Download</span>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted font-mono">No visual image or SVG files found in package.</p>
+                  )}
+                </div>
+              )}
+
+              {/* Tab 7: Bundle & Code Metrics */}
+              {activeTab === "analytics" && (
+                <div className="p-6 space-y-6">
+                  {/* Summary Metric Cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="p-4 rounded-xl border border-line bg-surface2/50">
+                      <p className="text-[11px] font-mono uppercase text-muted">Total Lines of Code</p>
+                      <p className="text-2xl font-bold font-display text-brass mt-1">
+                        {bundleAnalytics.totalLOC.toLocaleString()}
+                      </p>
+                      <p className="text-xs text-muted mt-1">Source lines across all files</p>
+                    </div>
+
+                    <div className="p-4 rounded-xl border border-line bg-surface2/50">
+                      <p className="text-[11px] font-mono uppercase text-muted">Total Unpacked Size</p>
+                      <p className="text-2xl font-bold font-display text-teal mt-1">
+                        {(bundleAnalytics.totalBytes / 1024).toFixed(1)} KB
+                      </p>
+                      <p className="text-xs text-muted mt-1">{bundleAnalytics.totalFiles} files in archive</p>
+                    </div>
+
+                    <div className="p-4 rounded-xl border border-line bg-surface2/50">
+                      <p className="text-[11px] font-mono uppercase text-muted">Store Category Benchmark</p>
+                      <p className="text-2xl font-bold font-display text-paper mt-1">
+                        {bundleAnalytics.storeRiskPercentile}th %
+                      </p>
+                      <p className="text-xs text-muted mt-1">{bundleAnalytics.riskCategoryBadge}</p>
+                    </div>
+                  </div>
+
+                  {/* File Composition Distribution Bar */}
+                  <div className="p-4 rounded-xl border border-line bg-surface2/40 space-y-3">
+                    <p className="text-xs font-semibold text-paper font-mono">Bundle File Composition</p>
+                    <div className="h-4 w-full rounded-full overflow-hidden flex bg-surface border border-line">
+                      {bundleAnalytics.typeStats.map((st, i) => (
+                        <div
+                          key={i}
+                          style={{ width: `${st.percentage}%`, backgroundColor: st.color }}
+                          title={`${st.type}: ${st.percentage}%`}
+                        />
+                      ))}
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2">
+                      {bundleAnalytics.typeStats.map((st, i) => (
+                        <div key={i} className="flex items-center gap-2 font-mono text-xs">
+                          <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: st.color }} />
+                          <span className="text-muted truncate">{st.type}:</span>
+                          <span className="text-paper font-bold">{st.percentage}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Top Largest Files Ranking */}
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold text-paper font-display">Top 5 Largest Files in Package</h3>
+                    <div className="space-y-2 font-mono text-xs">
+                      {bundleAnalytics.largestFiles.map((lf, i) => (
+                        <div
+                          key={i}
+                          onClick={() => {
+                            setActiveTab("explorer");
+                            handleSelectFile(lf.path);
+                          }}
+                          className="p-3 rounded-lg border border-line bg-surface2/30 cursor-pointer hover:border-brass/40 flex items-center justify-between gap-4"
+                        >
+                          <span className="text-paper truncate">{lf.path}</span>
+                          <span className="text-brass font-bold">{lf.sizeFormatted}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Tab 8: Enterprise & Policies */}
+              {activeTab === "enterprise" && (
+                <div className="p-6 space-y-6">
+                  {/* Enterprise Policy JSON & Windows Registry Snippet */}
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold text-paper font-display flex items-center gap-2">
+                      <Building className="w-4 h-4 text-brass" />
+                      <span>Chrome / Edge Enterprise Policy Generator</span>
+                    </h3>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 font-mono text-xs">
+                      <div className="p-4 rounded-xl border border-line bg-surface2/40 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-brass font-bold">ExtensionSettings (JSON)</span>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(enterprisePolicies.extensionSettingsJson);
+                              alert("Copied Policy JSON!");
+                            }}
+                            className="text-muted hover:text-paper"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <pre className="p-3 rounded bg-ink border border-line text-[11px] overflow-x-auto text-paper">
+                          {enterprisePolicies.extensionSettingsJson}
+                        </pre>
+                      </div>
+
+                      <div className="p-4 rounded-xl border border-line bg-surface2/40 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-teal font-bold">Windows Registry (.reg)</span>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(enterprisePolicies.windowsRegistryReg);
+                              alert("Copied Windows Registry Script!");
+                            }}
+                            className="text-muted hover:text-paper"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <pre className="p-3 rounded bg-ink border border-line text-[11px] overflow-x-auto text-paper">
+                          {enterprisePolicies.windowsRegistryReg}
+                        </pre>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Bundled Open Source Libraries (SCA) */}
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold text-paper font-display flex items-center gap-2">
+                      <Package className="w-4 h-4 text-teal" />
+                      <span>Detected Third-Party Libraries (SCA)</span>
+                    </h3>
+
+                    {detectedLibraries.length > 0 ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 font-mono text-xs">
+                        {detectedLibraries.map((lib, i) => (
+                          <div key={i} className="p-3 rounded-lg border border-line bg-surface2/40 space-y-0.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-brass font-bold">{lib.name}</span>
+                              <span className="text-[10px] text-muted">{lib.category}</span>
+                            </div>
+                            <p className="text-[10px] text-muted truncate">Found in: {lib.file}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted font-mono">No standard third-party frameworks detected (Vanilla implementation).</p>
+                    )}
+                  </div>
+
+                  {/* Open Source Licenses & Copyrights */}
+                  <div className="space-y-3">
+                    <h3 className="text-sm font-semibold text-paper font-display flex items-center gap-2">
+                      <FileCheck className="w-4 h-4 text-amber-400" />
+                      <span>License & Copyright Notice Harvester</span>
+                    </h3>
+
+                    {licenseFindings.length > 0 ? (
+                      <div className="space-y-2 font-mono text-xs">
+                        {licenseFindings.map((lic, i) => (
+                          <div key={i} className="p-3 rounded-lg border border-line bg-surface2/40 flex items-center justify-between gap-4">
+                            <div>
+                              <span className="text-teal font-bold">{lic.type}</span>
+                              <p className="text-[11px] text-muted truncate">{lic.snippet}</p>
+                            </div>
+                            <span className="text-[10px] text-muted">{lic.file}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted font-mono">No SPDX or dedicated license files detected.</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Tab 9: CRX Package Diff & Comparison Tool */}
+              {activeTab === "diff" && (
+                <div className="p-6 space-y-6">
+                  {/* Upload Dropzones */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="p-4 rounded-xl border border-brass/40 bg-brass/5 space-y-2">
+                      <p className="text-xs font-mono font-bold text-brass uppercase">Package A (Current Active)</p>
+                      <p className="text-sm font-bold text-paper truncate">{meta.name || meta.id}</p>
+                      <p className="text-xs text-muted font-mono">{zipEntries.filter((e) => !e.isDir).length} files loaded</p>
+                    </div>
+
+                    <div className="p-4 rounded-xl border border-line bg-surface2/40 flex flex-col items-center justify-center text-center space-y-2 relative">
+                      <p className="text-xs font-mono font-bold text-paper uppercase">Package B (Compare Target)</p>
+                      {metaB ? (
+                        <div className="space-y-1">
+                          <p className="text-sm font-bold text-teal truncate">{metaB.name || metaB.id}</p>
+                          <p className="text-xs text-muted font-mono">Ready for comparison</p>
+                        </div>
+                      ) : (
+                        <label className="cursor-pointer px-4 py-2 bg-surface border border-line hover:border-brass text-paper rounded-lg text-xs font-mono transition-colors">
+                          <span>{isDiffing ? "Loading..." : "Drop or Upload .CRX / .ZIP"}</span>
+                          <input
+                            type="file"
+                            accept=".crx,.zip,.xpi"
+                            className="hidden"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) handleUploadPackageB(f);
+                            }}
+                          />
+                        </label>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Diff Analysis Results */}
+                  {diffResult && (
+                    <div className="space-y-6">
+                      {/* Permission Escalation Delta */}
+                      <div className="p-4 rounded-xl border border-line bg-surface2/40 space-y-3">
+                        <p className="text-xs font-bold text-paper font-mono flex items-center gap-2">
+                          <Key className="w-4 h-4 text-brass" />
+                          <span>Permission Escalation & Changes</span>
+                        </p>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono text-xs">
+                          <div className="p-3 rounded bg-surface border border-line space-y-1">
+                            <span className="text-[10px] text-danger font-bold uppercase">
+                              + Added ({diffResult.permissionChanges.added.length})
+                            </span>
+                            <p className="text-paper truncate">
+                              {diffResult.permissionChanges.added.join(", ") || "None"}
+                            </p>
+                          </div>
+
+                          <div className="p-3 rounded bg-surface border border-line space-y-1">
+                            <span className="text-[10px] text-teal font-bold uppercase">
+                              - Removed ({diffResult.permissionChanges.removed.length})
+                            </span>
+                            <p className="text-muted truncate">
+                              {diffResult.permissionChanges.removed.join(", ") || "None"}
+                            </p>
+                          </div>
+
+                          <div className="p-3 rounded bg-surface border border-line space-y-1">
+                            <span className="text-[10px] text-muted font-bold uppercase">
+                              = Retained ({diffResult.permissionChanges.unchanged.length})
+                            </span>
+                            <p className="text-muted truncate">
+                              {diffResult.permissionChanges.unchanged.length} permissions
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* File Diff Viewer */}
+                      <div className="grid grid-cols-1 md:grid-cols-12 border border-line rounded-xl overflow-hidden min-h-[400px]">
+                        <div className="md:col-span-4 border-r border-line bg-surface2/30 p-2 space-y-1 max-h-[460px] overflow-y-auto font-mono text-xs">
+                          <p className="p-2 text-[10px] text-muted uppercase font-bold">File Changes ({diffResult.fileChanges.length})</p>
+                          {diffResult.fileChanges.map((fc, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => handleSelectDiffFile(fc.path)}
+                              className={`w-full text-left p-2 rounded flex items-center justify-between gap-2 ${
+                                selectedDiffFile === fc.path ? "bg-brass/20 text-brass border border-brass/30" : "text-muted hover:text-paper hover:bg-surface"
+                              }`}
+                            >
+                              <span className="truncate">{fc.path}</span>
+                              <span
+                                className={`text-[10px] font-bold uppercase ${
+                                  fc.status === "added"
+                                    ? "text-teal"
+                                    : fc.status === "removed"
+                                    ? "text-danger"
+                                    : "text-amber-400"
+                                }`}
+                              >
+                                {fc.status}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="md:col-span-8 p-3 bg-ink overflow-auto max-h-[460px]">
+                          {diffLines ? (
+                            <DiffCodeViewer diffLines={diffLines} filename={selectedDiffFile || ""} />
+                          ) : (
+                            <div className="p-8 text-center text-xs text-muted font-mono">
+                              Select a modified file to view line-by-line colored diff.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tab 10: Manifest V3 Migration Health */}
+              {activeTab === "mv3" && (
+                <div className="p-6 space-y-6 font-mono">
+                  <div className="p-4 rounded-xl border border-line bg-surface2/50 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs uppercase text-muted">Overall MV3 Readiness Score</p>
+                      <p className="text-2xl font-bold font-display text-brass mt-1">
+                        {mv3Check ? `${mv3Check.score}%` : "100%"}
+                      </p>
+                    </div>
+                    <span
+                      className={`px-3 py-1 rounded text-xs uppercase font-bold ${
+                        mv3Check?.isMV3 ? "bg-teal/20 text-teal border border-teal/40" : "bg-danger/20 text-danger border border-danger/40"
+                      }`}
+                    >
+                      {mv3Check?.isMV3 ? "MV3 Compliant" : "MV2 Deprecated"}
+                    </span>
+                  </div>
+
+                  {mv3Check && mv3Check.issues.length > 0 && (
+                    <div className="space-y-3">
+                      {mv3Check.issues.map((iss, idx) => (
+                        <div key={idx} className="p-3.5 rounded-xl border border-line bg-surface2/30 space-y-1 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-paper">{iss.field}</span>
+                            <span className="text-amber-400">WARNING</span>
+                          </div>
+                          <p className="text-muted text-[11px]">{iss.description}</p>
+                          <p className="text-teal text-[10px]">Remedy: {iss.remedy}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </motion.div>
         )}
-      </section>
-
-      {/* Visual Reference Guide: Where to find Extension ID */}
-      <section className="mx-auto max-w-6xl border-t border-line px-6 py-14">
-        <div className="text-center max-w-xl mx-auto mb-8">
-          <div className="inline-flex items-center gap-1.5 text-xs text-brass font-mono mb-2">
-            <Info className="w-4 h-4" />
-            <span>Visual Reference</span>
-          </div>
-          <h2 className="font-display text-2xl font-bold tracking-tight text-paper">
-            Where to find any Extension ID
-          </h2>
-          <p className="text-xs text-muted mt-1">
-            Every Chrome extension has a unique 32-character string of lowercase letters (a–p).
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Reference Card 1 */}
-          <div className="p-6 rounded-2xl border border-line bg-surface flex flex-col justify-between">
-            <div>
-              <div className="flex items-center gap-2 text-xs font-mono text-brass font-bold mb-3">
-                <span className="w-5 h-5 rounded-full bg-brass/20 flex items-center justify-center text-[11px]">1</span>
-                <span>From Chrome Web Store URL</span>
-              </div>
-              <p className="text-xs text-muted leading-relaxed mb-4">
-                Open any extension page on the Chrome Web Store. The last 32 letters in the address bar is the ID.
-              </p>
-
-              {/* Graphic Mockup */}
-              <div className="p-3 rounded-xl bg-ink border border-line font-mono text-xs overflow-x-auto">
-                <div className="flex items-center gap-1.5 pb-2 mb-2 border-b border-line/40 text-[10px] text-muted">
-                  <span className="w-2 h-2 rounded-full bg-danger/80" />
-                  <span className="w-2 h-2 rounded-full bg-amber-400/80" />
-                  <span className="w-2 h-2 rounded-full bg-teal/80" />
-                  <span className="ml-2 truncate text-muted/60">chromewebstore.google.com</span>
-                </div>
-                <div className="text-[11px] leading-relaxed">
-                  <span className="text-muted/60">https://chromewebstore.google.com/detail/name/</span>
-                  <span className="text-brass font-bold bg-brass/20 px-1 rounded border border-brass/40">
-                    ddkjiahejlhfcafbddmgiahcphecmpfh
-                  </span>
-                </div>
-              </div>
-            </div>
-            <p className="text-[11px] text-teal mt-4 flex items-center gap-1">
-              <Check className="w-3.5 h-3.5" />
-              <span>Tip: You can also paste the entire URL directly into GetCRX!</span>
-            </p>
-          </div>
-
-          {/* Reference Card 2 */}
-          <div className="p-6 rounded-2xl border border-line bg-surface flex flex-col justify-between">
-            <div>
-              <div className="flex items-center gap-2 text-xs font-mono text-brass font-bold mb-3">
-                <span className="w-5 h-5 rounded-full bg-brass/20 flex items-center justify-center text-[11px]">2</span>
-                <span>From chrome://extensions page</span>
-              </div>
-              <p className="text-xs text-muted leading-relaxed mb-4">
-                Open <code className="text-brass bg-surface2 px-1 py-0.5 rounded">chrome://extensions</code> in Chrome,
-                enable <strong>Developer mode</strong> in the top right corner, and the ID appears under each extension.
-              </p>
-
-              {/* Graphic Mockup */}
-              <div className="p-3 rounded-xl bg-ink border border-line font-mono text-xs">
-                <div className="flex items-center justify-between pb-2 mb-2 border-b border-line/40 text-[10px] text-muted">
-                  <span className="text-paper font-medium">uBlock Origin Lite</span>
-                  <span className="text-teal text-[10px] bg-teal/10 px-1.5 py-0.5 rounded border border-teal/30">
-                    Developer mode ON
-                  </span>
-                </div>
-                <div className="text-[11px]">
-                  <span className="text-muted/60">ID: </span>
-                  <span className="text-brass font-bold">ddkjiahejlhfcafbddmgiahcphecmpfh</span>
-                </div>
-              </div>
-            </div>
-            <p className="text-[11px] text-muted/80 mt-4">
-              Copy that ID and paste it above to extract the extension.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* How it works Section */}
-      <section id="how" className="mx-auto max-w-6xl border-t border-line px-6 py-16">
-        <h2 className="font-display text-2xl font-bold tracking-tight">How it works</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
-          <StepCard
-            n="01"
-            title="Identifier Resolution"
-            body="Provide a Chrome Store link, Firefox Add-on URL, 32-character extension ID, or drop a local CRX/XPI file."
-          />
-          <StepCard
-            n="02"
-            title="Google / Mozilla CDN Retrieval"
-            body="Connects straight to Google or Mozilla's public update infrastructure using native client protocol headers."
-          />
-          <StepCard
-            n="03"
-            title="Header Stripping & Audit"
-            body="Removes binary CRX2/CRX3 headers in memory, reconstructing clean zip archives for instant browser analysis, code search, and diffing."
-          />
-        </div>
-      </section>
+      </div>
 
       {/* Footer */}
-      <footer className="mx-auto max-w-6xl border-t border-line px-6 py-12">
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div>
-            <p className="font-display text-base font-bold text-paper">GetCRX</p>
-            <p className="text-xs text-muted mt-0.5">
-              Developed & Engineered by <span className="text-brass font-medium">JOJIN JOHN</span>
-            </p>
-          </div>
-          <p className="text-xs text-muted/70 text-center sm:text-right">
-            Zero data stored. Processes public browser extension packages ephemerally in-memory.
-          </p>
+      <footer className="border-t border-line px-6 py-6 text-center text-xs text-muted font-mono relative z-10 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <p>GetCRX &bull; Developed by JOJIN JOHN &bull; All Rights Reserved</p>
+        <div className="flex items-center gap-4">
+          <a href="/sitemap.xml" target="_blank" className="hover:text-paper underline">
+            Sitemap
+          </a>
+          <a href="/robots.txt" target="_blank" className="hover:text-paper underline">
+            Robots.txt
+          </a>
+          <button onClick={() => setShowIdGuide(true)} className="hover:text-paper underline">
+            Extension ID Guide
+          </button>
         </div>
       </footer>
 
-      {/* Command Palette Modal (Ctrl+K / Cmd+K) */}
+      {/* Command Palette Modal (Cmd+K / Ctrl+K) */}
       {showCommandPalette && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/80 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-start justify-center pt-24 p-4 bg-ink/80 backdrop-blur-sm"
           onClick={() => setShowCommandPalette(false)}
         >
           <div
-            className="bg-surface border border-line rounded-2xl max-w-lg w-full p-4 shadow-2xl relative"
+            className="bg-surface border border-line rounded-2xl max-w-lg w-full p-4 shadow-2xl space-y-3"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center gap-2 pb-3 border-b border-line">
-              <Command className="w-4 h-4 text-brass" />
+            <div className="relative">
+              <Search className="w-4 h-4 text-muted absolute left-3 top-3" />
               <input
                 type="text"
-                placeholder="Type a command or jump to file..."
                 autoFocus
-                className="w-full bg-transparent text-xs font-mono text-paper placeholder:text-muted/60 focus:outline-none"
+                placeholder="Jump to tab or run action (e.g. explorer, security, diff)..."
+                className="w-full bg-surface2 border border-line rounded-xl pl-10 pr-3 py-2 text-xs text-paper placeholder:text-muted/60 focus:outline-none focus:border-brass font-mono"
               />
-              <button onClick={() => setShowCommandPalette(false)} className="text-muted hover:text-paper">
-                <X className="w-4 h-4" />
-              </button>
             </div>
-
-            <div className="py-2 space-y-1 text-xs font-mono">
-              <button
-                onClick={() => {
-                  setActiveTab("overview");
-                  setShowCommandPalette(false);
-                }}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface2 text-left text-paper"
-              >
-                <Eye className="w-3.5 h-3.5 text-brass" />
-                <span>Go to Overview & Threat Intel</span>
-              </button>
-              <button
-                onClick={() => {
-                  setActiveTab("explorer");
-                  setShowCommandPalette(false);
-                }}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface2 text-left text-paper"
-              >
-                <FileCode className="w-3.5 h-3.5 text-teal" />
-                <span>Open Code Explorer</span>
-              </button>
-              <button
-                onClick={() => {
-                  setActiveTab("security");
-                  setShowCommandPalette(false);
-                }}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface2 text-left text-paper"
-              >
-                <ShieldAlert className="w-3.5 h-3.5 text-danger" />
-                <span>Run Security Audit & Custom Rules</span>
-              </button>
-              <button
-                onClick={() => {
-                  setActiveTab("network");
-                  setShowCommandPalette(false);
-                }}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface2 text-left text-paper"
-              >
-                <Radio className="w-3.5 h-3.5 text-teal" />
-                <span>Network & Telemetry Harvester</span>
-              </button>
-              <button
-                onClick={() => {
-                  setActiveTab("diff");
-                  setShowCommandPalette(false);
-                }}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface2 text-left text-paper"
-              >
-                <GitCompare className="w-3.5 h-3.5 text-amber-400" />
-                <span>Open Package Diff & Comparison Tool</span>
-              </button>
-              <button
-                onClick={() => {
-                  setShowEncyclopedia(true);
-                  setShowCommandPalette(false);
-                }}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface2 text-left text-paper"
-              >
-                <BookOpen className="w-3.5 h-3.5 text-teal" />
-                <span>Browse Permissions Encyclopedia</span>
-              </button>
-              <button
-                onClick={() => {
-                  handleExportSecurityReport();
-                  setShowCommandPalette(false);
-                }}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface2 text-left text-paper"
-              >
-                <FileDown className="w-3.5 h-3.5 text-teal" />
-                <span>Export Security Audit Report (.md)</span>
-              </button>
+            <div className="space-y-1 font-mono text-xs">
+              {[
+                { name: "Code Explorer", tab: "explorer" as const },
+                { name: "Security & Secrets Auditor", tab: "security" as const },
+                { name: "CSP & Attack Surface", tab: "csp" as const },
+                { name: "Network Telemetry Harvester", tab: "network" as const },
+                { name: "Asset & Icon Gallery", tab: "assets" as const },
+                { name: "Bundle Composition & Metrics", tab: "analytics" as const },
+                { name: "Enterprise Policies (.reg / JSON)", tab: "enterprise" as const },
+                { name: "Version Diff Engine", tab: "diff" as const }
+              ].map((act, i) => (
+                <button
+                  key={i}
+                  onClick={() => {
+                    setActiveTab(act.tab);
+                    setShowCommandPalette(false);
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-lg hover:bg-surface2 text-paper flex items-center justify-between"
+                >
+                  <span>{act.name}</span>
+                  <span className="text-[10px] text-muted">Tab</span>
+                </button>
+              ))}
             </div>
           </div>
         </div>
@@ -2395,14 +2776,14 @@ function Home() {
           onClick={() => setShowEncyclopedia(false)}
         >
           <div
-            className="bg-surface border border-line rounded-2xl max-w-3xl w-full p-6 shadow-2xl relative max-h-[85vh] flex flex-col"
+            className="bg-surface border border-line rounded-2xl max-w-2xl w-full p-6 shadow-2xl relative max-h-[85vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-4 border-b border-line">
               <div>
                 <h3 className="font-display text-lg font-bold text-paper flex items-center gap-2">
                   <BookOpen className="w-5 h-5 text-teal" />
-                  <span>Browser Permissions & Threat Model Encyclopedia</span>
+                  <span>Permissions & Threat Model Encyclopedia</span>
                 </h3>
                 <p className="text-xs text-muted mt-0.5">Comprehensive audit reference for Chrome, Edge, and Firefox API permissions.</p>
               </div>
@@ -2411,7 +2792,6 @@ function Home() {
               </button>
             </div>
 
-            {/* Filter controls */}
             <div className="py-3 border-b border-line flex flex-col sm:flex-row gap-2.5 items-center justify-between">
               <div className="relative flex-1 w-full">
                 <Search className="w-3.5 h-3.5 text-muted absolute left-2.5 top-2.5" />
@@ -2439,7 +2819,6 @@ function Home() {
               </div>
             </div>
 
-            {/* List */}
             <div className="flex-1 overflow-y-auto py-3 space-y-2.5 pr-1">
               {filteredEncyclopedia.map((doc) => (
                 <div key={doc.name} className="p-3.5 rounded-xl border border-line bg-surface2/40 space-y-1">
@@ -2473,7 +2852,105 @@ function Home() {
         </div>
       )}
 
-      {/* Modal Dialog for ID Guide */}
+      {/* Interactive Install Guide Modal */}
+      {showInstallGuide && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/80 backdrop-blur-sm"
+          onClick={() => setShowInstallGuide(false)}
+        >
+          <div
+            className="bg-surface border border-line rounded-2xl max-w-lg w-full p-6 shadow-2xl relative space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-line">
+              <h3 className="font-display text-lg font-bold text-paper flex items-center gap-2">
+                <Layers className="w-5 h-5 text-amber-400" />
+                <span>How to Load Unpacked Extensions</span>
+              </h3>
+              <button onClick={() => setShowInstallGuide(false)} className="text-muted hover:text-paper">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs font-mono">
+              <div className="p-3 rounded-xl bg-surface2 border border-line space-y-1">
+                <p className="text-brass font-bold">Step 1: Download & Unzip</p>
+                <p className="text-muted">Click &quot;Download .ZIP&quot; on GetCRX and unzip the folder on your computer.</p>
+              </div>
+
+              <div className="p-3 rounded-xl bg-surface2 border border-line space-y-1">
+                <p className="text-teal font-bold">Step 2: Open Browser Extensions Page</p>
+                <p className="text-muted">In Google Chrome / Brave / Edge, navigate to:</p>
+                <code className="block p-2 rounded bg-ink border border-line text-paper">chrome://extensions</code>
+              </div>
+
+              <div className="p-3 rounded-xl bg-surface2 border border-line space-y-1">
+                <p className="text-amber-400 font-bold">Step 3: Enable Developer Mode & Load</p>
+                <p className="text-muted">Toggle &quot;Developer mode&quot; on in the top-right corner, then click &quot;Load unpacked&quot; and select the unzipped directory.</p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowInstallGuide(false)}
+              className="w-full py-2.5 rounded-lg bg-brass text-ink font-semibold text-xs font-mono hover:bg-brassDim"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 1-Click Bookmarklet Modal */}
+      {showBookmarkletModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/80 backdrop-blur-sm"
+          onClick={() => setShowBookmarkletModal(false)}
+        >
+          <div
+            className="bg-surface border border-line rounded-2xl max-w-lg w-full p-6 shadow-2xl relative space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-line">
+              <h3 className="font-display text-lg font-bold text-paper flex items-center gap-2">
+                <Bookmark className="w-5 h-5 text-teal" />
+                <span>1-Click Browser Bookmarklet</span>
+              </h3>
+              <button onClick={() => setShowBookmarkletModal(false)} className="text-muted hover:text-paper">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-muted leading-relaxed">
+              Drag the button below to your browser&apos;s bookmarks toolbar. When you visit any extension on the Chrome Web Store, click the bookmarklet to extract and unpack it instantly in GetCRX!
+            </p>
+
+            <div className="p-4 rounded-xl bg-surface2 border border-line flex flex-col items-center justify-center gap-3">
+              <a
+                href="javascript:(function(){var u=window.location.href;if(u.includes('chromewebstore.google.com/detail/')){var id=u.split('/detail/')[1].split('/')[0].split('?')[0];window.open('https://getcrx.vercel.app/?id='+id,'_blank');}else{alert('Please open a Chrome Web Store extension page first!');}})()"
+                onClick={(e) => e.preventDefault()}
+                className="px-4 py-2.5 rounded-xl bg-brass text-ink font-mono font-bold text-xs shadow-lg cursor-grab hover:bg-brassDim"
+              >
+                ⚡ Extract with GetCRX
+              </a>
+              <span className="text-[10px] font-mono text-muted">Drag & drop onto your Bookmarks Bar</span>
+            </div>
+
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(
+                  "javascript:(function(){var u=window.location.href;if(u.includes('chromewebstore.google.com/detail/')){var id=u.split('/detail/')[1].split('/')[0].split('?')[0];window.open('https://getcrx.vercel.app/?id='+id,'_blank');}else{alert('Please open a Chrome Web Store extension page first!');}})()"
+                );
+                alert("Bookmarklet JavaScript copied to clipboard!");
+              }}
+              className="w-full py-2 rounded-lg bg-surface border border-line text-paper font-mono text-xs hover:bg-surface2"
+            >
+              Copy Bookmarklet Code
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ID Guide Modal */}
       {showIdGuide && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/80 backdrop-blur-sm"
@@ -2483,23 +2960,17 @@ function Home() {
             className="bg-surface border border-line rounded-2xl max-w-lg w-full p-6 shadow-2xl relative"
             onClick={(e) => e.stopPropagation()}
           >
-            <button
-              onClick={() => setShowIdGuide(false)}
-              className="absolute top-4 right-4 text-muted hover:text-paper"
-            >
+            <button onClick={() => setShowIdGuide(false)} className="absolute top-4 right-4 text-muted hover:text-paper">
               <X className="w-5 h-5" />
             </button>
             <h3 className="font-display text-lg font-bold text-paper mb-2">How to Find Extension ID</h3>
             <p className="text-xs text-muted mb-4 leading-relaxed">
-              Every Chrome extension has a 32-character ID. You can find it using either method:
+              Every Chrome extension has a unique 32-character ID:
             </p>
 
             <div className="space-y-4 text-xs">
               <div className="p-3.5 rounded-xl border border-line bg-surface2">
                 <p className="font-semibold text-brass font-mono">Method 1: From Store URL (Easiest)</p>
-                <p className="text-muted mt-1 leading-relaxed">
-                  Look at the Chrome Web Store URL. The 32 letters at the end is the ID:
-                </p>
                 <code className="block mt-2 p-2 rounded bg-ink text-paper font-mono text-[11px] break-all border border-line">
                   chromewebstore.google.com/detail/name/<span className="text-brass font-bold">cjpalhdlnbpafiamejdnhcphjbkeiagm</span>
                 </code>
@@ -2516,7 +2987,7 @@ function Home() {
 
             <button
               onClick={() => setShowIdGuide(false)}
-              className="mt-6 w-full py-2.5 rounded-lg bg-brass text-ink font-semibold text-xs hover:bg-brassDim transition-colors"
+              className="mt-6 w-full py-2.5 rounded-lg bg-brass text-ink font-semibold text-xs hover:bg-brassDim transition-colors font-mono"
             >
               Got it
             </button>
@@ -2618,18 +3089,6 @@ function RenderTreeNodes({
   );
 }
 
-function StepCard({ n, title, body }: { n: string; title: string; body: string }) {
-  return (
-    <div className="p-6 rounded-xl border border-line bg-surface flex flex-col justify-between">
-      <div>
-        <span className="font-mono text-sm font-bold text-brass">{n}</span>
-        <h3 className="font-display text-base font-bold text-paper mt-2">{title}</h3>
-        <p className="mt-2 text-xs leading-relaxed text-muted">{body}</p>
-      </div>
-    </div>
-  );
-}
-
 function CrateMark() {
   return (
     <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -2644,3 +3103,4 @@ function CrateMark() {
     </svg>
   );
 }
+
