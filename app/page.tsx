@@ -22,7 +22,15 @@ import {
   ManifestV3MigrationCheck
 } from "@/lib/manifest-utils";
 import { buildFileTree, TreeNode, ZipEntryInfo } from "@/lib/file-tree";
-import { CodeViewer } from "@/lib/code-highlighter";
+import { CodeViewer, DiffCodeViewer } from "@/lib/code-highlighter";
+import { beautifyCode } from "@/lib/beautifier";
+import {
+  compareZipPackages,
+  computeLineDiff,
+  PackageDiffResult,
+  FileDiffItem,
+  DiffLine
+} from "@/lib/diff-engine";
 import {
   ShieldAlert,
   ShieldCheck,
@@ -57,7 +65,16 @@ import {
   ChevronRight,
   ChevronDown,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  GitCompare,
+  Sparkles,
+  Maximize2,
+  Minimize2,
+  Command,
+  Sliders,
+  Plus,
+  Minus,
+  RefreshCw
 } from "lucide-react";
 
 type Meta = {
@@ -83,7 +100,7 @@ const POPULAR_EXTENSIONS = [
   { name: "Bitwarden", id: "nngceckbapebfimnlniiiahkandclblb" }
 ];
 
-type ActiveTab = "overview" | "explorer" | "security" | "mv3";
+type ActiveTab = "overview" | "explorer" | "security" | "mv3" | "diff";
 
 export default function HomeWrapper() {
   return (
@@ -108,6 +125,7 @@ function Home() {
   const [copiedCli, setCopiedCli] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [showIdGuide, setShowIdGuide] = useState(false);
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
 
   // Archive inspection state
   const [zipInstance, setZipInstance] = useState<JSZip | null>(null);
@@ -115,13 +133,15 @@ function Home() {
   const [isUnpacking, setIsUnpacking] = useState(false);
   const [unpackError, setUnpackError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [fileContent, setFileContent] = useState<string | null>(null);
+  const [rawFileContent, setRawFileContent] = useState<string | null>(null);
   const [fileImageUrl, setFileImageUrl] = useState<string | null>(null);
   const [manifestData, setManifestData] = useState<any | null>(null);
   const [copiedFile, setCopiedFile] = useState(false);
   const [copiedManifest, setCopiedManifest] = useState(false);
 
-  // Code Explorer enhancements
+  // Code Explorer ergonomics & beautifier
+  const [isBeautified, setIsBeautified] = useState(false);
+  const [isFullscreenCode, setIsFullscreenCode] = useState(false);
   const [fileSearch, setFileSearch] = useState("");
   const [searchMode, setSearchMode] = useState<"path" | "content">("path");
   const [viewMode, setViewMode] = useState<"tree" | "flat">("tree");
@@ -131,12 +151,40 @@ function Home() {
   const [contentSearchMatches, setContentSearchMatches] = useState<SearchMatch[]>([]);
   const [isSearchingContent, setIsSearchingContent] = useState(false);
 
-  // Deep Security Analysis State
+  // Deep Security Analysis & Custom Rules State
   const [securityScan, setSecurityScan] = useState<SecurityScanResult | null>(null);
   const [isScanningSecurity, setIsScanningSecurity] = useState(false);
   const [mv3Check, setMv3Check] = useState<ManifestV3MigrationCheck | null>(null);
+  const [customRuleInput, setCustomRuleInput] = useState("");
+  const [customRuleMatches, setCustomRuleMatches] = useState<Array<{ file: string; line: number; snippet: string }>>([]);
+  const [isScanningCustomRule, setIsScanningCustomRule] = useState(false);
+
+  // CRX Package Diff & Comparison Tool State
+  const [zipBInstance, setZipBInstance] = useState<JSZip | null>(null);
+  const [metaB, setMetaB] = useState<Meta | null>(null);
+  const [diffResult, setDiffResult] = useState<PackageDiffResult | null>(null);
+  const [selectedDiffFile, setSelectedDiffFile] = useState<string | null>(null);
+  const [diffLines, setDiffLines] = useState<DiffLine[] | null>(null);
+  const [isDiffing, setIsDiffing] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Keyboard shortcut for Command Palette (Ctrl+K or Cmd+K)
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setShowCommandPalette((prev) => !prev);
+      }
+      if (e.key === "Escape") {
+        setShowCommandPalette(false);
+        setShowIdGuide(false);
+        setIsFullscreenCode(false);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   // Auto-lookup if ID is in URL params
   useEffect(() => {
@@ -149,10 +197,19 @@ function Home() {
     }
   }, []);
 
+  // Active code content based on beautify toggle
+  const displayedCode = useMemo(() => {
+    if (!rawFileContent || !selectedFile) return rawFileContent;
+    if (isBeautified) {
+      return beautifyCode(rawFileContent, selectedFile);
+    }
+    return rawFileContent;
+  }, [rawFileContent, selectedFile, isBeautified]);
+
   async function runLookup(inputQuery: string) {
     const id = extractExtensionId(inputQuery);
     if (!id) {
-      setErrorMsg("Couldn't find a valid 32-character extension ID or Chrome Store link.");
+      setErrorMsg("Couldn't find a valid extension ID, Chrome Store link, or Firefox Add-on URL.");
       setStatus("error");
       return;
     }
@@ -165,12 +222,15 @@ function Home() {
     setIsUnpacking(true);
     setUnpackError(null);
     setSelectedFile(null);
-    setFileContent(null);
+    setRawFileContent(null);
     setFileImageUrl(null);
     setManifestData(null);
     setSecurityScan(null);
     setMv3Check(null);
+    setDiffResult(null);
+    setZipBInstance(null);
     setContentSearchMatches([]);
+    setCustomRuleMatches([]);
     setActiveTab("overview");
 
     try {
@@ -178,7 +238,7 @@ function Home() {
       const data = await res.json();
 
       if (!res.ok) {
-        setErrorMsg(data.error ?? "Lookup failed. Verify the extension ID.");
+        setErrorMsg(data.error ?? "Lookup failed. Verify the extension ID or URL.");
         setStatus("error");
         setIsUnpacking(false);
         return;
@@ -423,12 +483,61 @@ function Home() {
       setStatus("found");
       setActiveTab("explorer");
     } catch (err: any) {
-      setErrorMsg(err.message || "Failed to parse local file. Ensure it is a valid .crx or .zip file.");
+      setErrorMsg(err.message || "Failed to parse local file. Ensure it is a valid .crx, .xpi, or .zip file.");
       setStatus("error");
     } finally {
       setIsUnpacking(false);
       setIsScanningSecurity(false);
     }
+  }
+
+  // Handle uploading Package B for diff comparison
+  async function handleUploadPackageB(file: File) {
+    setIsDiffing(true);
+    try {
+      const buffer = await file.arrayBuffer();
+      const uint8 = new Uint8Array(buffer);
+      const zipBytes = stripCrxHeaderUint8Array(uint8);
+      const zipB = await JSZip.loadAsync(zipBytes);
+
+      setZipBInstance(zipB);
+      setMetaB({
+        id: file.name.replace(/\.[^/.]+$/, ""),
+        name: file.name,
+        icon: null,
+        description: `Compare Target: ${file.name}`,
+        notFound: false
+      });
+
+      if (zipInstance) {
+        const result = await compareZipPackages(zipInstance, zipB);
+        setDiffResult(result);
+        if (result.fileChanges.length > 0) {
+          const firstMod = result.fileChanges.find((f) => f.status === "modified") || result.fileChanges[0];
+          handleSelectDiffFile(firstMod.path, zipInstance, zipB);
+        }
+      }
+    } catch (err: any) {
+      alert("Failed to parse compare package: " + err.message);
+    } finally {
+      setIsDiffing(false);
+    }
+  }
+
+  async function handleSelectDiffFile(path: string, zipA?: JSZip, zipB?: JSZip) {
+    const zA = zipA || zipInstance;
+    const zB = zipB || zipBInstance;
+    if (!zA || !zB) return;
+
+    setSelectedDiffFile(path);
+    const fileA = zA.file(path);
+    const fileB = zB.file(path);
+
+    const textA = fileA ? await fileA.async("text").catch(() => "(binary)") : "";
+    const textB = fileB ? await fileB.async("text").catch(() => "(binary)") : "";
+
+    const lines = computeLineDiff(textA, textB);
+    setDiffLines(lines);
   }
 
   async function handleSelectFile(path: string, lineToHighlight?: number) {
@@ -438,7 +547,7 @@ function Home() {
 
     setSelectedFile(path);
     setFileImageUrl(null);
-    setFileContent(null);
+    setRawFileContent(null);
     setHighlightLine(lineToHighlight ?? null);
 
     const isImage = /\.(png|jpe?g|gif|svg|webp|ico)$/i.test(path);
@@ -449,9 +558,9 @@ function Home() {
     } else {
       try {
         const text = await file.async("text");
-        setFileContent(text);
+        setRawFileContent(text);
       } catch {
-        setFileContent("(Binary file — cannot preview text)");
+        setRawFileContent("(Binary file — cannot preview text)");
       }
     }
   }
@@ -481,8 +590,8 @@ function Home() {
   }
 
   function handleCopyCode() {
-    if (!fileContent) return;
-    navigator.clipboard.writeText(fileContent);
+    if (!displayedCode) return;
+    navigator.clipboard.writeText(displayedCode);
     setCopiedFile(true);
     setTimeout(() => setCopiedFile(false), 2000);
   }
@@ -523,7 +632,7 @@ function Home() {
                   line: i + 1,
                   snippet: lines[i].trim().slice(0, 140)
                 });
-                if (matches.length >= 80) break; // cap results for UI performance
+                if (matches.length >= 80) break;
               }
             }
           } catch {}
@@ -536,6 +645,57 @@ function Home() {
     setIsSearchingContent(false);
   }
 
+  // Custom Security Rule Scanner
+  async function runCustomRuleScan(pattern: string) {
+    if (!zipInstance || !pattern.trim()) {
+      setCustomRuleMatches([]);
+      return;
+    }
+
+    setIsScanningCustomRule(true);
+    const matches: Array<{ file: string; line: number; snippet: string }> = [];
+    let regex: RegExp;
+
+    try {
+      regex = new RegExp(pattern, "gi");
+    } catch {
+      alert("Invalid regular expression pattern.");
+      setIsScanningCustomRule(false);
+      return;
+    }
+
+    const textExts = /\.(js|ts|jsx|tsx|json|html|htm|css|txt|md|yaml|yml)$/i;
+    const promises: Promise<void>[] = [];
+
+    zipInstance.forEach((relativePath, file) => {
+      if (file.dir || !textExts.test(relativePath)) return;
+
+      promises.push(
+        (async () => {
+          try {
+            const text = await file.async("text");
+            const lines = text.split("\n");
+            for (let i = 0; i < lines.length; i++) {
+              regex.lastIndex = 0;
+              if (regex.test(lines[i])) {
+                matches.push({
+                  file: relativePath,
+                  line: i + 1,
+                  snippet: lines[i].trim().slice(0, 150)
+                });
+                if (matches.length >= 100) break;
+              }
+            }
+          } catch {}
+        })()
+      );
+    });
+
+    await Promise.all(promises);
+    setCustomRuleMatches(matches);
+    setIsScanningCustomRule(false);
+  }
+
   function reset() {
     setStatus("idle");
     setMeta(null);
@@ -544,11 +704,14 @@ function Home() {
     setZipInstance(null);
     setZipEntries([]);
     setSelectedFile(null);
-    setFileContent(null);
+    setRawFileContent(null);
     setManifestData(null);
     setSecurityScan(null);
     setMv3Check(null);
+    setDiffResult(null);
+    setZipBInstance(null);
     setContentSearchMatches([]);
+    setCustomRuleMatches([]);
     setActiveTab("overview");
     inputRef.current?.focus();
   }
@@ -561,8 +724,6 @@ function Home() {
     const all = Array.from(new Set([...regular, ...host, ...optional]));
     return all.map(classifyPermission);
   }, [manifestData]);
-
-  const highRiskCount = permissionsList.filter((p) => p.level === "high").length;
 
   const filteredEntries = useMemo(() => {
     if (!fileSearch.trim()) return zipEntries;
@@ -599,8 +760,8 @@ function Home() {
       {isDragging && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-ink/90 backdrop-blur-sm border-2 border-dashed border-brass pointer-events-none">
           <UploadCloud className="w-16 h-16 text-brass animate-bounce" />
-          <p className="mt-4 text-xl font-display font-semibold text-paper">Drop .CRX or .ZIP file to unpack</p>
-          <p className="text-sm text-muted">Client-side zero-upload inspection</p>
+          <p className="mt-4 text-xl font-display font-semibold text-paper">Drop .CRX, .XPI, or .ZIP file to unpack</p>
+          <p className="text-sm text-muted">Zero-upload client-side extraction</p>
         </div>
       )}
 
@@ -612,17 +773,24 @@ function Home() {
             <div className="flex items-center gap-2">
               <span className="font-display text-xl font-bold tracking-tight text-paper">GetCRX</span>
             </div>
-            <p className="text-[11px] text-muted tracking-tight">Chrome Extension Unpacker & Security Auditor</p>
+            <p className="text-[11px] text-muted tracking-tight">Chrome & Firefox Extension Unpacker & Security Auditor</p>
           </div>
         </div>
 
         <div className="flex items-center gap-4 text-xs">
           <button
+            onClick={() => setShowCommandPalette(true)}
+            className="focus-ring rounded px-2.5 py-1 bg-surface border border-line text-muted hover:text-paper text-[11px] font-mono flex items-center gap-1.5 transition-colors"
+          >
+            <Command className="w-3 h-3 text-brass" />
+            <span>Cmd+K</span>
+          </button>
+          <button
             onClick={() => setShowIdGuide(true)}
             className="focus-ring rounded text-muted transition-colors hover:text-brass flex items-center gap-1.5"
           >
             <HelpCircle className="w-3.5 h-3.5 text-brass" />
-            <span>How to find Extension ID</span>
+            <span>How to find ID</span>
           </button>
           <span className="text-line hidden sm:inline-block">|</span>
           <span className="font-mono text-muted text-[11px] hidden sm:inline-block">
@@ -636,19 +804,19 @@ function Home() {
         <div className="text-center max-w-2xl mx-auto">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-line bg-surface/80 text-xs text-muted mb-4 shadow-sm">
             <span className="w-2 h-2 rounded-full bg-teal animate-pulse" />
-            <span>Real-time Code Explorer • Secret Scanner • MV3 Inspector</span>
+            <span>Source Code Explorer • Secret Scanner • Version Diff Engine</span>
           </div>
 
           <h1 className="font-display text-4xl sm:text-5xl font-bold tracking-tight leading-[1.1] text-paper">
             Extract, inspect, and audit any{" "}
             <span className="bg-gradient-to-r from-brass via-amber-300 to-teal bg-clip-text text-transparent">
-              Chrome Extension.
+              Browser Extension.
             </span>
           </h1>
 
           <p className="mt-4 text-[15px] leading-relaxed text-muted">
-            Paste a Chrome Web Store link or extension ID. We fetch the package straight from Google's update CDN,
-            strip binary CRX headers, and provide full syntax code viewing, secret scanning, and permission auditing.
+            Paste a Chrome Web Store link, Firefox Add-on URL, or 32-character ID. GetCRX strips binary container headers,
+            formats code, scans for secrets and vulnerabilities, and diffs versions in real time.
           </p>
         </div>
 
@@ -661,7 +829,7 @@ function Home() {
                 ref={inputRef}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Paste Chrome Web Store link, 32-char ID, or drop .crx file"
+                placeholder="Paste Chrome Web Store link, Firefox URL, 32-char ID, or drop .crx/.xpi"
                 disabled={status === "looking" || status === "extracting"}
                 className="w-full bg-transparent pl-10 pr-4 py-3 font-mono text-[13px] text-paper placeholder:text-muted/60 focus:outline-none"
               />
@@ -806,7 +974,7 @@ function Home() {
                     className="focus-ring flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-2.5 text-xs font-medium text-muted hover:text-paper hover:bg-surface2 transition-colors"
                   >
                     <FileArchive className="w-3.5 h-3.5" />
-                    <span>Raw .crx</span>
+                    <span>Raw Package</span>
                   </button>
 
                   <button
@@ -840,7 +1008,7 @@ function Home() {
                   }`}
                 >
                   <Eye className="w-4 h-4" />
-                  <span>Overview & Details</span>
+                  <span>Overview</span>
                 </button>
 
                 <button
@@ -861,7 +1029,7 @@ function Home() {
                 >
                   <FileCode className="w-4 h-4" />
                   <span>
-                    Code Explorer ({isUnpacking ? "Loading..." : `${zipEntries.filter((e) => !e.isDir).length} files`})
+                    Code Explorer ({isUnpacking ? "..." : `${zipEntries.filter((e) => !e.isDir).length}`})
                   </span>
                 </button>
 
@@ -874,12 +1042,24 @@ function Home() {
                   }`}
                 >
                   <ShieldAlert className="w-4 h-4" />
-                  <span>Security & Vulnerabilities</span>
+                  <span>Security & Custom Rules</span>
                   {securityScan && (securityScan.summary.critical > 0 || securityScan.summary.high > 0) && (
                     <span className="px-1.5 py-0.2 rounded-full bg-danger/20 text-danger text-[10px] font-mono border border-danger/30">
-                      {securityScan.summary.critical + securityScan.summary.high} Alert(s)
+                      {securityScan.summary.critical + securityScan.summary.high}
                     </span>
                   )}
+                </button>
+
+                <button
+                  onClick={() => setActiveTab("diff")}
+                  className={`py-3.5 px-4 border-b-2 flex items-center gap-2 transition-colors shrink-0 ${
+                    activeTab === "diff"
+                      ? "border-brass text-brass"
+                      : "border-transparent text-muted hover:text-paper"
+                  }`}
+                >
+                  <GitCompare className="w-4 h-4 text-teal" />
+                  <span>Version Diff & Compare</span>
                 </button>
 
                 <button
@@ -891,7 +1071,7 @@ function Home() {
                   }`}
                 >
                   <Flame className="w-4 h-4 text-amber-400" />
-                  <span>MV3 Migration & Health</span>
+                  <span>MV3 Health</span>
                 </button>
               </div>
 
@@ -945,14 +1125,14 @@ function Home() {
                   {/* Chrome Store Link & Quick Details */}
                   <div className="p-4 rounded-xl border border-line bg-surface2/30 flex items-center justify-between gap-4 flex-wrap text-xs">
                     <div>
-                      <p className="text-muted font-mono text-[11px]">Official Chrome Web Store URL:</p>
+                      <p className="text-muted font-mono text-[11px]">Official Extension Identifier / URL:</p>
                       <a
-                        href={`https://chromewebstore.google.com/detail/${meta.id}`}
+                        href={meta.id.length === 32 ? `https://chromewebstore.google.com/detail/${meta.id}` : `https://addons.mozilla.org/en-US/firefox/addon/${meta.id}/`}
                         target="_blank"
                         rel="noreferrer"
                         className="text-brass hover:underline flex items-center gap-1.5 mt-0.5 font-mono"
                       >
-                        <span>chromewebstore.google.com/detail/{meta.id}</span>
+                        <span>{meta.id}</span>
                         <ExternalLink className="w-3.5 h-3.5" />
                       </a>
                     </div>
@@ -983,9 +1163,9 @@ function Home() {
                 </div>
               )}
 
-              {/* Tab 2: Advanced Code Explorer */}
+              {/* Tab 2: Advanced Code Explorer with Beautifier & Resizer */}
               {activeTab === "explorer" && (
-                <div className="grid grid-cols-1 md:grid-cols-12 min-h-[540px]">
+                <div className={`grid grid-cols-1 md:grid-cols-12 ${isFullscreenCode ? "fixed inset-0 z-50 bg-ink p-4" : "min-h-[560px]"}`}>
                   {/* Left Column: File Tree & Search */}
                   <div className="md:col-span-4 border-r border-line bg-surface2/30 flex flex-col">
                     {/* Search & Mode Switcher */}
@@ -1058,7 +1238,7 @@ function Home() {
                       {isUnpacking ? (
                         <div className="p-8 text-center text-xs text-muted flex flex-col items-center justify-center gap-2">
                           <span className="w-5 h-5 border-2 border-brass border-t-transparent rounded-full animate-spin" />
-                          <span>Unpacking extension source...</span>
+                          <span>Unpacking source...</span>
                         </div>
                       ) : unpackError ? (
                         <div className="p-4 text-xs text-danger text-center">
@@ -1069,7 +1249,6 @@ function Home() {
                           </button>
                         </div>
                       ) : searchMode === "content" ? (
-                        /* Content Search Matches List */
                         <div className="space-y-1.5 p-1">
                           {isSearchingContent ? (
                             <div className="p-4 text-center text-xs text-muted">Searching through files...</div>
@@ -1094,7 +1273,6 @@ function Home() {
                           )}
                         </div>
                       ) : viewMode === "tree" ? (
-                        /* Tree View */
                         <RenderTreeNodes
                           nodes={treeNodes}
                           selectedFile={selectedFile}
@@ -1103,7 +1281,6 @@ function Home() {
                           onSelectFile={handleSelectFile}
                         />
                       ) : (
-                        /* Flat List View */
                         filteredEntries.map((entry) => {
                           const isSelected = selectedFile === entry.path;
                           const isCode = /\.(js|json|html|css|ts|jsx|tsx|md|txt)$/i.test(entry.name);
@@ -1145,7 +1322,7 @@ function Home() {
                   <div className="md:col-span-8 flex flex-col bg-ink/70">
                     {selectedFile ? (
                       <>
-                        <div className="p-3 border-b border-line flex items-center justify-between gap-2 bg-surface/90">
+                        <div className="p-3 border-b border-line flex items-center justify-between gap-2 bg-surface/90 flex-wrap">
                           <div className="flex items-center gap-2 min-w-0">
                             <span className="font-mono text-xs text-paper truncate font-medium">{selectedFile}</span>
                             {highlightLine && (
@@ -1155,6 +1332,21 @@ function Home() {
                             )}
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
+                            {/* Beautify Button */}
+                            <button
+                              onClick={() => setIsBeautified(!isBeautified)}
+                              title="Toggle JS/JSON Code Beautification"
+                              className={`px-2 py-1 rounded border text-[11px] font-mono flex items-center gap-1 transition-colors ${
+                                isBeautified
+                                  ? "bg-teal/20 text-teal border-teal/40"
+                                  : "bg-surface border-line text-muted hover:text-paper"
+                              }`}
+                            >
+                              <Sparkles className="w-3 h-3 text-teal" />
+                              <span>{isBeautified ? "Beautified" : "Beautify"}</span>
+                            </button>
+
+                            {/* Wrap Button */}
                             <button
                               onClick={() => setWrapLines(!wrapLines)}
                               title="Toggle Word Wrap"
@@ -1166,7 +1358,16 @@ function Home() {
                               <span>Wrap</span>
                             </button>
 
-                            {fileContent && (
+                            {/* Fullscreen Button */}
+                            <button
+                              onClick={() => setIsFullscreenCode(!isFullscreenCode)}
+                              title="Toggle Fullscreen"
+                              className="px-2 py-1 rounded bg-surface border border-line text-muted hover:text-paper text-[11px] font-mono flex items-center gap-1"
+                            >
+                              {isFullscreenCode ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
+                            </button>
+
+                            {displayedCode && (
                               <button
                                 onClick={handleCopyCode}
                                 className="px-2.5 py-1 rounded bg-surface border border-line text-muted hover:text-paper text-[11px] font-mono flex items-center gap-1"
@@ -1186,7 +1387,7 @@ function Home() {
                           </div>
                         </div>
 
-                        <div className="flex-1 overflow-auto max-h-[520px] bg-ink/50 p-2">
+                        <div className="flex-1 overflow-auto max-h-[540px] bg-ink/50 p-2">
                           {fileImageUrl ? (
                             <div className="flex flex-col items-center justify-center p-8">
                               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1197,9 +1398,9 @@ function Home() {
                               />
                               <p className="mt-3 text-xs text-muted font-mono">{selectedFile}</p>
                             </div>
-                          ) : fileContent !== null ? (
+                          ) : displayedCode !== null ? (
                             <CodeViewer
-                              code={fileContent}
+                              code={displayedCode}
                               filename={selectedFile}
                               highlightLine={highlightLine}
                               wrapLines={wrapLines}
@@ -1222,10 +1423,10 @@ function Home() {
                 </div>
               )}
 
-              {/* Tab 3: Security & Vulnerability Analysis */}
+              {/* Tab 3: Security & Custom Rules Scanner */}
               {activeTab === "security" && (
                 <div className="p-6 space-y-6">
-                  {/* Security Health Score Banner */}
+                  {/* Security Score Banner */}
                   <div className="p-5 rounded-2xl border border-line bg-surface2/50 flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div className="flex items-center gap-4">
                       <div
@@ -1259,6 +1460,62 @@ function Home() {
                     </button>
                   </div>
 
+                  {/* Custom Security Rule Scanner */}
+                  <div className="p-5 rounded-2xl border border-brass/40 bg-brass/5 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-display text-sm font-bold text-paper flex items-center gap-2">
+                        <Sliders className="w-4 h-4 text-brass" />
+                        <span>Custom Security & Pattern Scanner</span>
+                      </h4>
+                      <span className="text-[11px] font-mono text-muted">Live Regex Engine</span>
+                    </div>
+
+                    <p className="text-xs text-muted leading-relaxed">
+                      Enter a custom regex string or pattern to scan the entire extension package for internal endpoints, proprietary secrets, or custom indicators of compromise.
+                    </p>
+
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        value={customRuleInput}
+                        onChange={(e) => setCustomRuleInput(e.target.value)}
+                        placeholder="e.g. api\.internal\.corp|bearer\s+[A-Za-z0-9\-_]+|wss?:\/\/"
+                        className="flex-1 bg-surface border border-line rounded-lg px-3 py-2 text-xs font-mono text-paper placeholder:text-muted/60 focus:outline-none focus:border-brass/70"
+                      />
+                      <button
+                        onClick={() => runCustomRuleScan(customRuleInput)}
+                        disabled={isScanningCustomRule || !customRuleInput.trim()}
+                        className="px-4 py-2 rounded-lg bg-brass text-ink font-semibold text-xs hover:bg-brassDim transition-colors shrink-0 disabled:opacity-40"
+                      >
+                        {isScanningCustomRule ? "Scanning..." : "Run Custom Scan"}
+                      </button>
+                    </div>
+
+                    {/* Custom Match Results */}
+                    {customRuleMatches.length > 0 && (
+                      <div className="mt-3 p-3 rounded-xl bg-ink border border-line space-y-2">
+                        <p className="text-xs font-bold text-teal font-mono">
+                          Found {customRuleMatches.length} match(es) for &ldquo;{customRuleInput}&rdquo;:
+                        </p>
+                        <div className="space-y-1.5 max-h-[160px] overflow-y-auto">
+                          {customRuleMatches.map((m, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => {
+                                setActiveTab("explorer");
+                                handleSelectFile(m.file, m.line);
+                              }}
+                              className="w-full p-2 rounded text-left text-xs bg-surface border border-line hover:border-brass/40 transition-colors font-mono flex items-center justify-between gap-2"
+                            >
+                              <span className="truncate text-brass">{m.file}:{m.line}</span>
+                              <span className="truncate text-muted text-[11px]">{m.snippet}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   {/* Summary Counters */}
                   {securityScan && (
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
@@ -1281,7 +1538,7 @@ function Home() {
                     </div>
                   )}
 
-                  {/* Hardcoded Secrets Section */}
+                  {/* Hardcoded Secrets */}
                   {securityScan && securityScan.secrets.length > 0 && (
                     <div className="space-y-3">
                       <h4 className="font-display text-sm font-semibold text-paper flex items-center gap-2">
@@ -1356,7 +1613,7 @@ function Home() {
                     </div>
                   )}
 
-                  {/* Declared Permissions Matrix */}
+                  {/* Declared Permissions */}
                   <div className="space-y-3">
                     <h4 className="font-display text-sm font-semibold text-paper flex items-center gap-2">
                       <Shield className="w-4 h-4 text-brass" />
@@ -1398,7 +1655,142 @@ function Home() {
                 </div>
               )}
 
-              {/* Tab 4: Manifest V3 Migration & Health */}
+              {/* Tab 4: CRX Package Diff & Version Comparison */}
+              {activeTab === "diff" && (
+                <div className="p-6 space-y-6">
+                  <div>
+                    <h3 className="font-display text-base font-bold text-paper flex items-center gap-2">
+                      <GitCompare className="w-4 h-4 text-teal" />
+                      <span>CRX Package Version Diff & Supply Chain Auditor</span>
+                    </h3>
+                    <p className="text-xs text-muted mt-1 leading-relaxed">
+                      Compare the currently loaded extension against a newer/older version to detect rogue permission escalations, modified background scripts, and supply chain alterations.
+                    </p>
+                  </div>
+
+                  {/* Package B Upload Card */}
+                  <div className="p-6 rounded-2xl border-2 border-dashed border-line bg-surface2/30 flex flex-col items-center justify-center text-center">
+                    <UploadCloud className="w-10 h-10 text-teal mb-2" />
+                    <p className="text-sm font-semibold text-paper">Select or Drop Version B (.crx / .xpi / .zip)</p>
+                    <p className="text-xs text-muted mt-1 max-w-sm">
+                      Upload the second package to compute file additions, deletions, code diffs, and permission shifts.
+                    </p>
+
+                    <label className="mt-4 px-4 py-2 rounded-lg bg-teal text-ink font-semibold text-xs hover:bg-teal/90 transition-colors cursor-pointer">
+                      <span>Choose Package B</span>
+                      <input
+                        type="file"
+                        accept=".crx,.zip,.xpi"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleUploadPackageB(file);
+                        }}
+                      />
+                    </label>
+                  </div>
+
+                  {/* Diff Results Interface */}
+                  {diffResult && (
+                    <div className="space-y-6">
+                      {/* Summary Cards */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
+                        <div className="p-3 rounded-xl border border-teal/30 bg-teal/10">
+                          <span className="text-teal font-bold text-base">+{diffResult.summary.addedFiles}</span>
+                          <p className="text-teal/80 text-[11px] mt-0.5">Added Files</p>
+                        </div>
+                        <div className="p-3 rounded-xl border border-danger/30 bg-danger/10">
+                          <span className="text-danger font-bold text-base">-{diffResult.summary.removedFiles}</span>
+                          <p className="text-danger/80 text-[11px] mt-0.5">Removed Files</p>
+                        </div>
+                        <div className="p-3 rounded-xl border border-amber-400/30 bg-amber-400/10">
+                          <span className="text-amber-400 font-bold text-base">~{diffResult.summary.modifiedFiles}</span>
+                          <p className="text-amber-400/80 text-[11px] mt-0.5">Modified Files</p>
+                        </div>
+                        <div className="p-3 rounded-xl border border-line bg-surface2">
+                          <span className="text-paper font-bold text-base">{diffResult.summary.unchangedFiles}</span>
+                          <p className="text-muted text-[11px] mt-0.5">Unchanged Files</p>
+                        </div>
+                      </div>
+
+                      {/* Permission Changes Alert */}
+                      {(diffResult.permissionChanges.added.length > 0 || diffResult.permissionChanges.removed.length > 0) && (
+                        <div className="p-4 rounded-xl border border-amber-400/40 bg-amber-400/10 space-y-2">
+                          <h4 className="font-display text-sm font-bold text-amber-300">Permission Escalations & Changes</h4>
+                          {diffResult.permissionChanges.added.length > 0 && (
+                            <div className="text-xs font-mono text-teal">
+                              <strong>Added Permissions:</strong> {diffResult.permissionChanges.added.join(", ")}
+                            </div>
+                          )}
+                          {diffResult.permissionChanges.removed.length > 0 && (
+                            <div className="text-xs font-mono text-danger">
+                              <strong>Removed Permissions:</strong> {diffResult.permissionChanges.removed.join(", ")}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Side-by-Side Diff Viewer */}
+                      <div className="grid grid-cols-1 md:grid-cols-12 min-h-[440px] border border-line rounded-xl overflow-hidden">
+                        {/* File Changes List */}
+                        <div className="md:col-span-4 border-r border-line bg-surface2/30 p-2 overflow-y-auto max-h-[480px] space-y-1">
+                          <p className="text-[11px] font-mono text-muted uppercase px-2 py-1">Changed Files</p>
+                          {diffResult.fileChanges.map((file) => {
+                            const isSelected = selectedDiffFile === file.path;
+                            return (
+                              <button
+                                key={file.path}
+                                onClick={() => handleSelectDiffFile(file.path)}
+                                className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded text-xs font-mono transition-colors text-left ${
+                                  isSelected
+                                    ? "bg-brass/20 text-brass border border-brass/40"
+                                    : "text-muted hover:text-paper hover:bg-surface"
+                                }`}
+                              >
+                                <span className="truncate">{file.path}</span>
+                                <span
+                                  className={`text-[10px] font-bold uppercase px-1.5 py-0.2 rounded ${
+                                    file.status === "added"
+                                      ? "bg-teal/20 text-teal"
+                                      : file.status === "removed"
+                                      ? "bg-danger/20 text-danger"
+                                      : file.status === "modified"
+                                      ? "bg-amber-400/20 text-amber-400"
+                                      : "text-muted/60"
+                                  }`}
+                                >
+                                  {file.status}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Visual Code Diff View */}
+                        <div className="md:col-span-8 bg-ink/70 flex flex-col">
+                          <div className="p-3 border-b border-line bg-surface flex items-center justify-between text-xs font-mono">
+                            <span className="text-paper font-semibold truncate">{selectedDiffFile ?? "Select a file to inspect diff"}</span>
+                            <div className="flex items-center gap-2 text-[11px] text-muted">
+                              <span className="text-teal font-bold">+ Added</span>
+                              <span className="text-danger font-bold">- Removed</span>
+                            </div>
+                          </div>
+
+                          <div className="flex-1 overflow-auto max-h-[480px] p-2 bg-ink/50 font-mono text-xs">
+                            {diffLines && selectedDiffFile ? (
+                              <DiffCodeViewer diffLines={diffLines} filename={selectedDiffFile} />
+                            ) : (
+                              <div className="p-8 text-center text-xs text-muted">Select a file from the list to view line-by-line diff.</div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tab 5: Manifest V3 Migration & Health */}
               {activeTab === "mv3" && (
                 <div className="p-6 space-y-6">
                   <div className="p-5 rounded-2xl border border-line bg-surface2/50 flex items-center justify-between gap-4 flex-wrap">
@@ -1579,17 +1971,17 @@ function Home() {
           <StepCard
             n="01"
             title="Identifier Resolution"
-            body="Provide a store link, 32-character extension ID, or drop a local CRX file. We parse and normalize the package identity."
+            body="Provide a Chrome Store link, Firefox Add-on URL, 32-character extension ID, or drop a local CRX/XPI file."
           />
           <StepCard
             n="02"
-            title="Google CDN Update Call"
-            body="Connects straight to Google's public update infrastructure (clients2.google.com) using native Chrome client headers."
+            title="Google / Mozilla CDN Retrieval"
+            body="Connects straight to Google or Mozilla's public update infrastructure using native client protocol headers."
           />
           <StepCard
             n="03"
             title="Header Stripping & Audit"
-            body="Removes binary CRX2/CRX3 headers in memory, reconstructing the underlying zip archive for instant browser analysis and download."
+            body="Removes binary CRX2/CRX3 headers in memory, reconstructing clean zip archives for instant browser analysis, code search, and diffing."
           />
         </div>
       </section>
@@ -1604,10 +1996,89 @@ function Home() {
             </p>
           </div>
           <p className="text-xs text-muted/70 text-center sm:text-right">
-            Zero data stored. Processes public Google Chrome packages ephemerally in-memory.
+            Zero data stored. Processes public browser extension packages ephemerally in-memory.
           </p>
         </div>
       </footer>
+
+      {/* Command Palette Modal (Ctrl+K / Cmd+K) */}
+      {showCommandPalette && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/80 backdrop-blur-sm"
+          onClick={() => setShowCommandPalette(false)}
+        >
+          <div
+            className="bg-surface border border-line rounded-2xl max-w-lg w-full p-4 shadow-2xl relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 pb-3 border-b border-line">
+              <Command className="w-4 h-4 text-brass" />
+              <input
+                type="text"
+                placeholder="Type a command or jump to file..."
+                autoFocus
+                className="w-full bg-transparent text-xs font-mono text-paper placeholder:text-muted/60 focus:outline-none"
+              />
+              <button onClick={() => setShowCommandPalette(false)} className="text-muted hover:text-paper">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="py-2 space-y-1 text-xs font-mono">
+              <button
+                onClick={() => {
+                  setActiveTab("overview");
+                  setShowCommandPalette(false);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface2 text-left text-paper"
+              >
+                <Eye className="w-3.5 h-3.5 text-brass" />
+                <span>Go to Overview & Metadata</span>
+              </button>
+              <button
+                onClick={() => {
+                  setActiveTab("explorer");
+                  setShowCommandPalette(false);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface2 text-left text-paper"
+              >
+                <FileCode className="w-3.5 h-3.5 text-teal" />
+                <span>Open Code Explorer</span>
+              </button>
+              <button
+                onClick={() => {
+                  setActiveTab("security");
+                  setShowCommandPalette(false);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface2 text-left text-paper"
+              >
+                <ShieldAlert className="w-3.5 h-3.5 text-danger" />
+                <span>Run Security Audit & Custom Rules</span>
+              </button>
+              <button
+                onClick={() => {
+                  setActiveTab("diff");
+                  setShowCommandPalette(false);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface2 text-left text-paper"
+              >
+                <GitCompare className="w-3.5 h-3.5 text-amber-400" />
+                <span>Open Package Diff & Comparison Tool</span>
+              </button>
+              <button
+                onClick={() => {
+                  handleExportSecurityReport();
+                  setShowCommandPalette(false);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface2 text-left text-paper"
+              >
+                <FileDown className="w-3.5 h-3.5 text-teal" />
+                <span>Export Security Audit Report (.md)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal Dialog for ID Guide */}
       {showIdGuide && (
@@ -1625,7 +2096,7 @@ function Home() {
             >
               <X className="w-5 h-5" />
             </button>
-            <h3 className="font-display text-lg font-bold text-paper mb-2">How to Find Chrome Extension ID</h3>
+            <h3 className="font-display text-lg font-bold text-paper mb-2">How to Find Extension ID</h3>
             <p className="text-xs text-muted mb-4 leading-relaxed">
               Every Chrome extension has a 32-character ID. You can find it using either method:
             </p>

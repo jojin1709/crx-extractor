@@ -47,6 +47,55 @@ export function CodeViewer({ code, filename, highlightLine, wrapLines = false }:
   );
 }
 
+export function DiffCodeViewer({
+  diffLines,
+  filename
+}: {
+  diffLines: Array<{ type: "add" | "del" | "same"; text: string; lineA?: number; lineB?: number }>;
+  filename: string;
+}) {
+  const ext = filename.split(".").pop()?.toLowerCase() || "";
+
+  return (
+    <div className="font-mono text-[12px] leading-[20px] select-text">
+      {diffLines.map((line, idx) => {
+        const isAdd = line.type === "add";
+        const isDel = line.type === "del";
+
+        return (
+          <div
+            key={idx}
+            className={`flex transition-colors ${
+              isAdd
+                ? "bg-teal/15 text-teal border-l-2 border-teal"
+                : isDel
+                ? "bg-danger/15 text-danger border-l-2 border-danger opacity-80"
+                : "hover:bg-surface2/40"
+            }`}
+          >
+            <span className="w-10 shrink-0 text-right pr-2 text-muted/40 font-mono text-[10px] select-none py-0.5 border-r border-line/30">
+              {line.lineA ?? ""}
+            </span>
+            <span className="w-10 shrink-0 text-right pr-2 text-muted/40 font-mono text-[10px] select-none py-0.5 border-r border-line/30">
+              {line.lineB ?? ""}
+            </span>
+            <span className="w-6 shrink-0 text-center font-bold select-none py-0.5">
+              {isAdd ? "+" : isDel ? "-" : " "}
+            </span>
+            <span className="pl-2 py-0.5 flex-1 whitespace-pre overflow-x-auto">
+              {line.type === "same" ? (
+                <HighlightedTokens text={line.text} ext={ext} />
+              ) : (
+                <span>{line.text}</span>
+              )}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function HighlightedTokens({ text, ext }: { text: string; ext: string }) {
   if (!text) return <span>&nbsp;</span>;
 

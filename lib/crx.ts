@@ -1,8 +1,8 @@
 export const ID_PATTERN = /^[a-p]{32}$/i;
 
 /**
- * Pulls a 32-char extension id out of a raw id, a Chrome Web Store URL,
- * an Edge add-ons URL, or any input string.
+ * Pulls an extension id or slug out of a raw id, Chrome Web Store URL,
+ * Edge add-ons URL, or Firefox Add-ons URL.
  */
 export function extractExtensionId(input: string): string | null {
   const trimmed = input.trim();
@@ -11,8 +11,18 @@ export function extractExtensionId(input: string): string | null {
   try {
     const url = new URL(trimmed.startsWith("http") ? trimmed : `https://${trimmed}`);
     const segments = url.pathname.split("/").filter(Boolean);
+
+    // Chrome / Edge 32-char ID
     const candidate = segments.find((s) => /^[a-p]{32}$/i.test(s));
     if (candidate) return candidate.toLowerCase();
+
+    // Firefox Add-ons URL: addons.mozilla.org/.../addon/<slug>/
+    if (url.hostname.includes("addons.mozilla.org")) {
+      const addonIdx = segments.indexOf("addon");
+      if (addonIdx !== -1 && segments[addonIdx + 1]) {
+        return segments[addonIdx + 1].toLowerCase();
+      }
+    }
   } catch {
     // not a URL, fall through
   }

@@ -23,6 +23,15 @@ export async function GET(req: NextRequest) {
     });
 
     if (!res.ok) {
+      // Try Firefox AMO API
+      const amoRes = await fetch(`https://addons.mozilla.org/api/v5/addons/addon/${encodeURIComponent(id)}/`);
+      if (amoRes.ok) {
+        const amoData = await amoRes.json();
+        const name = typeof amoData.name === "object" ? amoData.name.en || Object.values(amoData.name)[0] : amoData.name;
+        const icon = amoData.icon_url || null;
+        const description = typeof amoData.summary === "object" ? amoData.summary.en || Object.values(amoData.summary)[0] : amoData.summary;
+        return NextResponse.json({ id, name, icon, description, notFound: false });
+      }
       return NextResponse.json({ id, name: null, icon: null, notFound: true });
     }
 

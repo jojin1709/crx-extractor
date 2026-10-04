@@ -1,17 +1,17 @@
 > [!NOTE]
-> **[GetCRX is Live](https://getcrx.vercel.app):** In-browser Chrome Extension unpacker, live code explorer, vulnerability scanner, hardcoded secret detector, Manifest V3 analyzer, and security auditor.
+> **[GetCRX is Live](https://getcrx.vercel.app):** In-browser Chrome & Firefox Extension unpacker, live code explorer, JS beautifier, version diff engine, vulnerability scanner, hardcoded secret detector, and security auditor.
 
 <div align="center">
 
 # GetCRX — Unpacked
-### High-Performance Chrome Extension Extractor & Security Inspector
+### High-Performance Browser Extension Extractor & Security Inspector
 
-**Extract, inspect, search, and audit the source code and security attack surface of any Chrome Web Store extension in real-time.**
+**Extract, inspect, beautify, search, diff, and audit the source code and security attack surface of any Chrome Web Store or Firefox Add-on extension in real-time.**
 
 [![Live Web App](https://img.shields.io/badge/Live%20App-getcrx.vercel.app-E8A33D?style=for-the-badge&logo=vercel&logoColor=white)](https://getcrx.vercel.app)
-[![Manifest V3 Ready](https://img.shields.io/badge/Manifest-V2%20%26%20V3-4FB6AE?style=for-the-badge)](https://getcrx.vercel.app)
+[![Cross-Browser](https://img.shields.io/badge/Browser-Chrome%20%7C%20Firefox%20%7C%20Edge-4FB6AE?style=for-the-badge)](https://getcrx.vercel.app)
 [![Security Scanner](https://img.shields.io/badge/Security-Audit%20%26%20Secrets-E8A33D?style=for-the-badge)](https://getcrx.vercel.app)
-[![Zero Install](https://img.shields.io/badge/Zero%20Install-100%25%20Browser-informational?style=for-the-badge)](https://getcrx.vercel.app)
+[![Version Diff](https://img.shields.io/badge/Diff-CRX%20Version%20Comparison-informational?style=for-the-badge)](https://getcrx.vercel.app)
 [![Developed by JOJIN JOHN](https://img.shields.io/badge/Developed%20By-JOJIN%20JOHN-E8A33D?style=for-the-badge)](https://getcrx.vercel.app)
 
 <br/>
@@ -33,9 +33,11 @@
 
 - [Overview](#overview)
 - [Key Features](#key-features)
-- [Deep Security & Vulnerability Analysis](#deep-security--vulnerability-analysis)
-- [Interactive Code Explorer & Search](#interactive-code-explorer--search)
+- [Deep Security & Custom Rule Scanner](#deep-security--custom-rule-scanner)
+- [Version Diff & Supply Chain Auditor](#version-diff--supply-chain-auditor)
+- [Interactive Code Explorer & Beautifier](#interactive-code-explorer--beautifier)
 - [Manifest V3 Migration Readiness](#manifest-v3-migration-readiness)
+- [Cross-Browser Support](#cross-browser-support)
 - [Architecture](#architecture)
 - [How It Works](#how-it-works)
 - [Quick Guide](#quick-guide)
@@ -48,30 +50,33 @@
 
 ## Overview
 
-**GetCRX** is an in-browser platform engineered for security researchers, bug bounty hunters, extension developers, and reverse engineers to instantly fetch, unpack, inspect, and audit Google Chrome extensions.
+**GetCRX** is an in-browser platform engineered for security researchers, bug bounty hunters, extension developers, and reverse engineers to instantly fetch, unpack, inspect, diff, and audit Google Chrome, Edge, and Firefox browser extensions.
 
-Paste any Chrome Web Store link or 32-character extension ID. GetCRX communicates with Google's public update infrastructure, strips binary container headers (CRX2/CRX3), and delivers the clean unpacked source as a `.zip` archive or directly inside an interactive, syntax-highlighted code explorer equipped with real-time vulnerability scanning, secret detection, and MV3 health scoring.
+Paste any Chrome Web Store link, Firefox Add-on URL, or 32-character extension ID. GetCRX communicates with Google and Mozilla public update infrastructure, strips binary container headers (CRX2/CRX3/XPI), and delivers the clean unpacked source as a `.zip` archive or directly inside an interactive, syntax-highlighted code explorer equipped with 1-click code beautification, real-time vulnerability scanning, custom regex rule auditing, version diffing, and MV3 health scoring.
 
 ---
 
 ## Key Features
 
-- **⚡ Instant Binary Unpacking:** Converts any signed `.crx` binary package to a clean `.zip` archive in milliseconds.
+- **⚡ Instant Binary Unpacking:** Converts signed `.crx`, `.xpi`, and `.zip` packages to clean source code in milliseconds.
+- **✨ 1-Click Code Beautifier / De-Minifier:** Automatically un-minifies and formats compressed single-line JavaScript, JSON, CSS, and HTML files.
+- **⚖️ Version Diff & Comparison Engine:** Drag and drop two versions of an extension to visualize newly requested permissions, added/removed files, and line-by-line code diffs.
 - **🛡️ Automated Security Audit & Health Score:** Generates an overall security grade (`A+` to `F`) and scans for dangerous code patterns and permissions.
 - **🔑 Hardcoded Secrets & Token Detector:** Scans files for exposed AWS keys, OpenAI tokens, Google Cloud API keys, GitHub tokens, Slack tokens, Stripe keys, and private keys.
+- **🎛️ Custom Security Rule Scanner:** Enter custom regular expressions to search for proprietary internal API endpoints, company auth tokens, or specific code signatures across all files.
 - **💻 Syntax-Highlighted Code Viewer:** Tokenized syntax highlighting for JavaScript, TypeScript, JSON, HTML, and CSS with line numbers and jump-to-line highlighting.
 - **🔎 Full-Text Code Search:** Search across all source code and files inside the extension to instantly locate API calls, functions, or sensitive strings.
 - **📁 Collapsible Directory Tree:** Switch seamlessly between an expandable folder hierarchy view and a flat file list.
+- **⌨️ Command Palette (`Cmd+K` / `Ctrl+K`):** Fast keyboard-driven navigation and action launcher.
 - **🌐 Localization (`_locales/`) Auto-Resolver:** Resolves `__MSG_appName__` placeholders from `_locales/en/messages.json` automatically for accurate metadata.
 - **🔥 Manifest V3 Migration Readiness:** Audits legacy MV2 fields (`background.scripts`, `browser_action`, `webRequestBlocking`) and provides actionable migration guidance.
 - **📄 1-Click Security Report Export:** Download comprehensive security audit reports in clean Markdown (`.md`) format.
-- **📦 Drag-and-Drop Local CRX Support:** Drop existing `.crx` or `.zip` files from your computer to inspect or unpack immediately.
-- **⚡ Dual Download Modes & CLI Support:** Download raw signed `.crx` files, unpacked `.zip` source archives, formatted `manifest.json`, or copyable `curl` CLI commands.
+- **📦 Drag-and-Drop Local CRX/XPI Support:** Drop existing `.crx`, `.xpi`, or `.zip` files from your computer to inspect or unpack immediately.
 - **🔒 Zero Server Storage:** 100% ephemeral in-memory processing. Nothing is stored, tracked, or saved on any server.
 
 ---
 
-## Deep Security & Vulnerability Analysis
+## Deep Security & Custom Rule Scanner
 
 GetCRX classifies extension capabilities and potential attack surface into structured tiers:
 
@@ -86,15 +91,26 @@ GetCRX classifies extension capabilities and potential attack surface into struc
 
 ---
 
-## Interactive Code Explorer & Search
+## Version Diff & Supply Chain Auditor
+
+The **Compare & Diff** tool allows researchers to detect supply chain compromises across extension updates:
+
+1. **Permission Escalation Matrix:** Highlights newly requested high-risk permissions added between releases.
+2. **File Delta Breakdown:** Tracks newly injected scripts, deleted files, and modified resources.
+3. **Visual Line-by-Line Code Diff:** Color-coded diff viewer (`+ Added` in green, `- Removed` in red) with dual line numbering.
+
+---
+
+## Interactive Code Explorer & Beautifier
 
 The built-in Code Explorer provides a full IDE-like reverse engineering experience in the browser:
 
-1. **Tree & Flat Views:** Toggle between hierarchical folder trees and flat file listings.
-2. **Syntax Highlighting & Line Numbers:** Clear tokenization for scripts, markup, stylesheets, and manifest files.
-3. **Full-Text In-File Search:** Real-time search across all files in the archive to find functions, endpoints, or variables.
-4. **Click-to-Line Jump:** Jump straight from security audit findings to the exact vulnerable code line.
-5. **Asset Preview:** Direct preview for PNG, JPEG, SVG, WebP, and ICO icons.
+1. **1-Click De-Minification:** Transform minified Webpack / Terser bundles into readable, indented JavaScript.
+2. **Tree & Flat Views:** Toggle between hierarchical folder trees and flat file listings.
+3. **Syntax Highlighting & Line Numbers:** Clear tokenization for scripts, markup, stylesheets, and manifest files.
+4. **Full-Text In-File Search:** Real-time search across all files in the archive to find functions, endpoints, or variables.
+5. **Fullscreen Code Mode:** Maximize the code viewer to full window dimensions for distraction-free analysis.
+6. **Click-to-Line Jump:** Jump straight from security audit findings or search matches to the exact vulnerable code line.
 
 ---
 
@@ -109,21 +125,31 @@ With Google Chrome phasing out Manifest V2, GetCRX evaluates compliance with mod
 
 ---
 
+## Cross-Browser Support
+
+GetCRX seamlessly unpacks packages across multiple browser ecosystems:
+- **Google Chrome:** Signed CRX2 and CRX3 binary formats from `chromewebstore.google.com`.
+- **Mozilla Firefox:** Signed XPI archives and store URLs from `addons.mozilla.org`.
+- **Microsoft Edge:** Edge add-on update packages from `microsoft.com/extensionwebstorebase`.
+
+---
+
 ## Architecture
 
 ```mermaid
 flowchart TD
-    A["User Input: Store URL / Extension ID / CRX File"] --> B["Identifier Extractor & Validator"]
-    B --> C["Google Chrome Web Store CDN / Edge Add-ons"]
-    C --> D["CRX Binary Stream (Cr24 Payload)"]
-    D --> E["Binary Header Stripper (CRX2 / CRX3 Engine)"]
+    A["User Input: Store URL / Extension ID / CRX / XPI File"] --> B["Identifier Extractor & Validator"]
+    B --> C["Google Chrome / Mozilla AMO / Edge CDN"]
+    C --> D["Binary Package Stream (Cr24 / XPI Payload)"]
+    D --> E["Binary Header Stripper (CRX2 / CRX3 / ZIP Engine)"]
     E --> F["Clean Zip Archive Payload"]
     F --> G["In-Memory Archive Parser (JSZip)"]
-    G --> H1["Interactive Code Explorer with Syntax Highlighting"]
+    G --> H1["Interactive Code Explorer with Syntax Highlighting & Beautifier"]
     G --> H2["Full-Text In-File Code Search Engine"]
-    G --> H3["Automated Vulnerability & Secret Scanner"]
-    G --> H4["Manifest V3 Migration & Compliance Checker"]
-    G --> H5["Unpacked .ZIP / .CRX / .MD Report Download Streams"]
+    G --> H3["Automated Vulnerability & Custom Regex Rule Scanner"]
+    G --> H4["Package Version Diff & Comparison Engine"]
+    G --> H5["Manifest V3 Migration & Compliance Checker"]
+    G --> H6["Unpacked .ZIP / .CRX / .MD Report Download Streams"]
 ```
 
 ---
@@ -131,16 +157,16 @@ flowchart TD
 ## Quick Guide
 
 1. Visit **[getcrx.vercel.app](https://getcrx.vercel.app)**.
-2. Paste the extension URL or 32-character ID (e.g., `ddkjiahejlhfcafbddmgiahcphecmpfh` for *uBlock Origin Lite*).
+2. Paste the extension URL or ID (e.g., `ddkjiahejlhfcafbddmgiahcphecmpfh` or Firefox slug `ublock-origin`).
 3. Click **Look up**.
-4. View extension metadata, audit permissions, explore files with syntax highlighting, scan for secrets, or click **Get Source (.zip)** to download.
+4. View extension metadata, audit permissions, explore files with syntax highlighting, beautify minified scripts, scan for secrets, or compare against another package version.
 
 ---
 
 ## Privacy & Compliance
 
 - **No Data Retention:** No IP logs, search queries, or extracted packages are persisted to databases or disk.
-- **Public Artifacts Only:** Interacts exclusively with public packages served directly by Google's public infrastructure.
+- **Public Artifacts Only:** Interacts exclusively with public packages served directly by browser update infrastructure.
 - **Client Discretion:** Users are responsible for complying with the software licenses and intellectual property terms of individual extensions.
 
 ---
@@ -158,13 +184,18 @@ Yes. GetCRX fully supports both Manifest V2 and modern Manifest V3 packages with
 </details>
 
 <details>
-<summary><strong>Can I test local .crx or .zip files?</strong></summary>
-Yes. Drag and drop any <code>.crx</code> or <code>.zip</code> file from your computer directly into the app interface to inspect and audit it.
+<summary><strong>Does this support Firefox Add-ons?</strong></summary>
+Yes. You can paste Firefox Add-on URLs or drop <code>.xpi</code> files directly into the application.
 </details>
 
 <details>
-<summary><strong>How does secret scanning work?</strong></summary>
-GetCRX runs static heuristic regex analysis across all script and text files in memory to identify leaked credentials such as AWS keys, OpenAI tokens, and private keys.
+<summary><strong>Can I test local .crx or .zip files?</strong></summary>
+Yes. Drag and drop any <code>.crx</code>, <code>.xpi</code>, or <code>.zip</code> file from your computer directly into the app interface to inspect and audit it.
+</details>
+
+<details>
+<summary><strong>How does code beautification work?</strong></summary>
+GetCRX parses tokens, brackets, and statements in memory to format compressed and minified scripts with proper indentation.
 </details>
 
 ---

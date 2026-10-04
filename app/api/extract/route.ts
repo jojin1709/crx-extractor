@@ -54,6 +54,27 @@ async function downloadCrxBuffer(id: string): Promise<Buffer | null> {
     // ignore
   }
 
+  // Firefox Add-ons (AMO) fallback
+  try {
+    const amoRes = await fetch(`https://addons.mozilla.org/api/v5/addons/addon/${encodeURIComponent(id)}/`);
+    if (amoRes.ok) {
+      const amoData = await amoRes.json();
+      const xpiUrl = amoData.current_version?.file?.url;
+      if (xpiUrl) {
+        const xpiRes = await fetch(xpiUrl, { headers: { "User-Agent": userAgent } });
+        if (xpiRes.ok) {
+          const arrayBuf = await xpiRes.arrayBuffer();
+          const buf = Buffer.from(arrayBuf);
+          if (buf.length > 500) {
+            return buf;
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
   return null;
 }
 
