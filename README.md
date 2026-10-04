@@ -1,9 +1,9 @@
 > [!NOTE]
-> **[GetCRX v2.0 is Live](https://getcrx.vercel.app):** In-browser Chrome Extension unpacker, live code explorer, vulnerability scanner, hardcoded secret detector, Manifest V3 analyzer, and security auditor.
+> **[GetCRX is Live](https://getcrx.vercel.app):** In-browser Chrome Extension unpacker, live code explorer, vulnerability scanner, hardcoded secret detector, Manifest V3 analyzer, and security auditor.
 
 <div align="center">
 
-# GetCRX — Unpacked v2.0 PRO
+# GetCRX — Unpacked
 ### High-Performance Chrome Extension Extractor & Security Inspector
 
 **Extract, inspect, search, and audit the source code and security attack surface of any Chrome Web Store extension in real-time.**

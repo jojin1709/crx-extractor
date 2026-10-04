@@ -611,9 +611,6 @@ function Home() {
           <div>
             <div className="flex items-center gap-2">
               <span className="font-display text-xl font-bold tracking-tight text-paper">GetCRX</span>
-              <span className="text-[10px] font-mono uppercase bg-brass/20 text-brass px-1.5 py-0.5 rounded border border-brass/30">
-                v2.0 PRO
-              </span>
             </div>
             <p className="text-[11px] text-muted tracking-tight">Chrome Extension Unpacker & Security Auditor</p>
           </div>
