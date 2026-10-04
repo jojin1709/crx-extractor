@@ -1,16 +1,17 @@
 > [!NOTE]
-> **[GetCRX v2.0 is Live](https://getcrx.vercel.app):** In-browser Chrome Extension unpacker, source code explorer, Manifest V3 analyzer, and security permission auditor.
+> **[GetCRX v2.0 is Live](https://getcrx.vercel.app):** In-browser Chrome Extension unpacker, live code explorer, vulnerability scanner, hardcoded secret detector, Manifest V3 analyzer, and security auditor.
 
 <div align="center">
 
-# GetCRX — Unpacked
+# GetCRX — Unpacked v2.0 PRO
 ### High-Performance Chrome Extension Extractor & Security Inspector
 
-**Extract, inspect, and analyze the raw source code of any Chrome Web Store extension in real-time.**
+**Extract, inspect, search, and audit the source code and security attack surface of any Chrome Web Store extension in real-time.**
 
 [![Live Web App](https://img.shields.io/badge/Live%20App-getcrx.vercel.app-E8A33D?style=for-the-badge&logo=vercel&logoColor=white)](https://getcrx.vercel.app)
 [![Manifest V3 Ready](https://img.shields.io/badge/Manifest-V2%20%26%20V3-4FB6AE?style=for-the-badge)](https://getcrx.vercel.app)
-[![No Install Required](https://img.shields.io/badge/Zero%20Install-100%25%20Browser-informational?style=for-the-badge)](https://getcrx.vercel.app)
+[![Security Scanner](https://img.shields.io/badge/Security-Audit%20%26%20Secrets-E8A33D?style=for-the-badge)](https://getcrx.vercel.app)
+[![Zero Install](https://img.shields.io/badge/Zero%20Install-100%25%20Browser-informational?style=for-the-badge)](https://getcrx.vercel.app)
 [![Developed by JOJIN JOHN](https://img.shields.io/badge/Developed%20By-JOJIN%20JOHN-E8A33D?style=for-the-badge)](https://getcrx.vercel.app)
 
 <br/>
@@ -32,9 +33,11 @@
 
 - [Overview](#overview)
 - [Key Features](#key-features)
-- [How It Works](#how-it-works)
+- [Deep Security & Vulnerability Analysis](#deep-security--vulnerability-analysis)
+- [Interactive Code Explorer & Search](#interactive-code-explorer--search)
+- [Manifest V3 Migration Readiness](#manifest-v3-migration-readiness)
 - [Architecture](#architecture)
-- [Security & Permission Analysis](#security--permission-analysis)
+- [How It Works](#how-it-works)
 - [Quick Guide](#quick-guide)
 - [Privacy & Compliance](#privacy--compliance)
 - [Frequently Asked Questions](#frequently-asked-questions)
@@ -45,30 +48,64 @@
 
 ## Overview
 
-**GetCRX** is an in-browser platform engineered for security researchers, bug bounty hunters, and developers to instantly fetch, unpack, inspect, and audit Google Chrome extensions.
+**GetCRX** is an in-browser platform engineered for security researchers, bug bounty hunters, extension developers, and reverse engineers to instantly fetch, unpack, inspect, and audit Google Chrome extensions.
 
-Paste any Chrome Web Store link or 32-character extension ID. GetCRX communicates with Google's public update infrastructure, strips binary container headers (CRX2/CRX3), and delivers the clean unpacked source as a `.zip` archive or directly within an interactive in-browser file and code explorer.
+Paste any Chrome Web Store link or 32-character extension ID. GetCRX communicates with Google's public update infrastructure, strips binary container headers (CRX2/CRX3), and delivers the clean unpacked source as a `.zip` archive or directly inside an interactive, syntax-highlighted code explorer equipped with real-time vulnerability scanning, secret detection, and MV3 health scoring.
 
 ---
 
 ## Key Features
 
-- **Instant Extraction:** Converts any `.crx` binary package to a standard `.zip` archive within milliseconds.
-- **In-Browser File Explorer & Code Viewer:** Inspect `manifest.json`, background service workers, content scripts, and assets without downloading files to disk.
-- **Security & Permission Risk Scoring:** Evaluates extension attack surface by classifying permissions into High, Medium, and Low risk tiers (`<all_urls>`, `webRequest`, `cookies`, `nativeMessaging`).
-- **Drag-and-Drop Local CRX Support:** Drop existing `.crx` or `.zip` files from your computer to inspect or unpack immediately.
-- **Dual Download Modes:** Download raw signed `.crx` binaries or unpacked `.zip` source archives.
-- **CLI & Deep Link Ready:** Automated query support via URL parameters (`?id=<extension_id>`) and copyable `curl` commands.
-- **Zero Server Storage:** 100% ephemeral in-memory processing. Nothing is stored, tracked, or saved on any server.
+- **⚡ Instant Binary Unpacking:** Converts any signed `.crx` binary package to a clean `.zip` archive in milliseconds.
+- **🛡️ Automated Security Audit & Health Score:** Generates an overall security grade (`A+` to `F`) and scans for dangerous code patterns and permissions.
+- **🔑 Hardcoded Secrets & Token Detector:** Scans files for exposed AWS keys, OpenAI tokens, Google Cloud API keys, GitHub tokens, Slack tokens, Stripe keys, and private keys.
+- **💻 Syntax-Highlighted Code Viewer:** Tokenized syntax highlighting for JavaScript, TypeScript, JSON, HTML, and CSS with line numbers and jump-to-line highlighting.
+- **🔎 Full-Text Code Search:** Search across all source code and files inside the extension to instantly locate API calls, functions, or sensitive strings.
+- **📁 Collapsible Directory Tree:** Switch seamlessly between an expandable folder hierarchy view and a flat file list.
+- **🌐 Localization (`_locales/`) Auto-Resolver:** Resolves `__MSG_appName__` placeholders from `_locales/en/messages.json` automatically for accurate metadata.
+- **🔥 Manifest V3 Migration Readiness:** Audits legacy MV2 fields (`background.scripts`, `browser_action`, `webRequestBlocking`) and provides actionable migration guidance.
+- **📄 1-Click Security Report Export:** Download comprehensive security audit reports in clean Markdown (`.md`) format.
+- **📦 Drag-and-Drop Local CRX Support:** Drop existing `.crx` or `.zip` files from your computer to inspect or unpack immediately.
+- **⚡ Dual Download Modes & CLI Support:** Download raw signed `.crx` files, unpacked `.zip` source archives, formatted `manifest.json`, or copyable `curl` CLI commands.
+- **🔒 Zero Server Storage:** 100% ephemeral in-memory processing. Nothing is stored, tracked, or saved on any server.
 
 ---
 
-## How It Works
+## Deep Security & Vulnerability Analysis
 
-1. **Identifier Resolution:** Parses the 32-character extension ID from URLs, store links, or bare hash strings.
-2. **Package Retrieval:** Connects to Google's public update CDN (`clients2.google.com`) using Chrome's native update protocol.
-3. **Binary Header Stripping:** Parses magic bytes (`Cr24`) and strips the 12-to-16 byte signature header (CRX2 / CRX3).
-4. **Source Reconstruction & Audit:** Validates the underlying zip payload, generates file trees, analyzes manifest permissions, and streams the verified source.
+GetCRX classifies extension capabilities and potential attack surface into structured tiers:
+
+| Severity | Category | Examples / Detection Rules | Threat Model / Potential Impact |
+| :--- | :--- | :--- | :--- |
+| **Critical** | **Secret Leaks** | AWS Keys (`AKIA...`), OpenAI (`sk-...`), Stripe Secret Keys (`sk_live_...`), Private Key blocks | Supply chain credential theft, cloud infrastructure compromise. |
+| **High** | **Dangerous Sinks** | `eval()`, `new Function()`, `chrome.tabs.executeScript`, Insecure CSP `'unsafe-eval'` | Arbitrary code execution, DOM-based Cross-Site Scripting (XSS). |
+| **High** | **Sensitive Perms** | `<all_urls>`, `*://*/*`, `webRequestBlocking`, `cookies`, `nativeMessaging`, `debugger` | Universal traffic interception, session hijacking, host binary execution. |
+| **Medium** | **Attack Surface** | `innerHTML` assignments, unvalidated `window.postMessage` listeners, wildcard `web_accessible_resources` | Cross-origin message spoofing, extension fingerprinting, DOM injection. |
+| **Medium** | **Broad Perms** | `tabs`, `storage`, `unlimitedStorage`, `scripting`, `clipboardRead`, `webNavigation` | Tab data extraction, local persistence, clipboard access. |
+| **Low / Safe** | **Standard APIs** | `alarms`, `contextMenus`, `idle`, `offscreen`, `sidePanel` | UI extensions and timer-based scheduling. |
+
+---
+
+## Interactive Code Explorer & Search
+
+The built-in Code Explorer provides a full IDE-like reverse engineering experience in the browser:
+
+1. **Tree & Flat Views:** Toggle between hierarchical folder trees and flat file listings.
+2. **Syntax Highlighting & Line Numbers:** Clear tokenization for scripts, markup, stylesheets, and manifest files.
+3. **Full-Text In-File Search:** Real-time search across all files in the archive to find functions, endpoints, or variables.
+4. **Click-to-Line Jump:** Jump straight from security audit findings to the exact vulnerable code line.
+5. **Asset Preview:** Direct preview for PNG, JPEG, SVG, WebP, and ICO icons.
+
+---
+
+## Manifest V3 Migration Readiness
+
+With Google Chrome phasing out Manifest V2, GetCRX evaluates compliance with modern Chromium standards:
+
+- **Service Worker Check:** Validates background migration from persistent pages to service workers.
+- **Declarative Net Request:** Identifies deprecated blocking `webRequest` usage.
+- **Action API Unification:** Flags legacy `browser_action` and `page_action` declarations.
+- **Object CSP Compliance:** Ensures Content Security Policy adheres to MV3 dictionary specifications.
 
 ---
 
@@ -77,37 +114,26 @@ Paste any Chrome Web Store link or 32-character extension ID. GetCRX communicate
 ```mermaid
 flowchart TD
     A["User Input: Store URL / Extension ID / CRX File"] --> B["Identifier Extractor & Validator"]
-    B --> C["Google Chrome Web Store CDN"]
+    B --> C["Google Chrome Web Store CDN / Edge Add-ons"]
     C --> D["CRX Binary Stream (Cr24 Payload)"]
     D --> E["Binary Header Stripper (CRX2 / CRX3 Engine)"]
-    E --> F["Clean Zip Archive"]
-    F --> G["In-Memory Archive Parser"]
-    G --> H1["Interactive File Tree & Code Viewer"]
-    G --> H2["Security & Permissions Risk Engine"]
-    G --> H3["Unpacked .ZIP Download Stream"]
-    G --> H4["Original .CRX Binary Download"]
+    E --> F["Clean Zip Archive Payload"]
+    F --> G["In-Memory Archive Parser (JSZip)"]
+    G --> H1["Interactive Code Explorer with Syntax Highlighting"]
+    G --> H2["Full-Text In-File Code Search Engine"]
+    G --> H3["Automated Vulnerability & Secret Scanner"]
+    G --> H4["Manifest V3 Migration & Compliance Checker"]
+    G --> H5["Unpacked .ZIP / .CRX / .MD Report Download Streams"]
 ```
-
----
-
-## Security & Permission Analysis
-
-GetCRX categorizes extension capabilities into structured risk tiers for security audits:
-
-| Severity | Permission Examples | Threat Model / Potential Impact |
-| :--- | :--- | :--- |
-| **High Risk** | `<all_urls>`, `*://*/*`, `webRequestBlocking`, `cookies`, `nativeMessaging`, `debugger` | Full traffic interception, cookie theft, DOM hijacking, local binary execution. |
-| **Medium Risk** | `tabs`, `storage`, `unlimitedStorage`, `scripting`, `clipboardRead`, `webNavigation` | Tab manipulation, local persistence, cross-origin script injection, clipboard access. |
-| **Low / Safe** | `alarms`, `contextMenus`, `idle`, `offscreen`, `sidePanel` | UI extensions and timer-based scheduling. |
 
 ---
 
 ## Quick Guide
 
 1. Visit **[getcrx.vercel.app](https://getcrx.vercel.app)**.
-2. Paste the extension URL or 32-character ID (e.g., `cjpalhdlnbpafiamejdnhcphjbkeiagm` for *uBlock Origin*).
+2. Paste the extension URL or 32-character ID (e.g., `ddkjiahejlhfcafbddmgiahcphecmpfh` for *uBlock Origin Lite*).
 3. Click **Look up**.
-4. View extension metadata, audit permissions, explore files in the browser, or click **Get Source (.zip)** to download.
+4. View extension metadata, audit permissions, explore files with syntax highlighting, scan for secrets, or click **Get Source (.zip)** to download.
 
 ---
 
@@ -132,8 +158,13 @@ Yes. GetCRX fully supports both Manifest V2 and modern Manifest V3 packages with
 </details>
 
 <details>
-<summary><strong>Can I test local .crx files?</strong></summary>
-Yes. Drag and drop any <code>.crx</code> file from your computer directly into the app interface to inspect and unpack it.
+<summary><strong>Can I test local .crx or .zip files?</strong></summary>
+Yes. Drag and drop any <code>.crx</code> or <code>.zip</code> file from your computer directly into the app interface to inspect and audit it.
+</details>
+
+<details>
+<summary><strong>How does secret scanning work?</strong></summary>
+GetCRX runs static heuristic regex analysis across all script and text files in memory to identify leaked credentials such as AWS keys, OpenAI tokens, and private keys.
 </details>
 
 ---
