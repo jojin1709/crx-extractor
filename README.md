@@ -61,7 +61,7 @@ Paste any Chrome Web Store link, Firefox Add-on URL, or 32-character extension I
 - **⚡ Instant Binary Unpacking:** Converts signed `.crx`, `.xpi`, and `.zip` packages to clean source code in milliseconds.
 - **📡 Network Endpoints & Telemetry Harvester:** Automatically extracts all HTTP, HTTPS, and WebSocket (WSS) URLs, domains, and third-party trackers across every script, mapped to exact source line numbers.
 - **📚 Interactive Permissions Risk Encyclopedia:** Searchable permission knowledgebase covering 60+ Chrome/Firefox permissions with detailed danger ratings, capability descriptions, and threat models.
-- **🛡️ VirusTotal & Threat Intel Direct Links:** One-click direct intelligence pivots to VirusTotal and CRXcavator for hash-level malware analysis.
+- **🛡️ VirusTotal & Threat Intel Direct Links:** One-click direct intelligence pivots to VirusTotal and Chrome-Stats for malware history and security metrics.
 - **✨ 1-Click Code Beautifier / De-Minifier:** Automatically un-minifies and formats compressed single-line JavaScript, JSON, CSS, and HTML files.
 - **⚖️ Version Diff & Comparison Engine:** Drag and drop two versions of an extension to visualize newly requested permissions, added/removed files, and line-by-line code diffs.
 - **🛡️ Automated Security Audit & Health Score:** Generates an overall security grade (`A+` to `F`) and scans for dangerous code patterns and permissions.

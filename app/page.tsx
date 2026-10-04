@@ -1287,15 +1287,17 @@ function Home() {
                           <span>VirusTotal Intel</span>
                           <ExternalLink className="w-3 h-3" />
                         </a>
-                        <a
-                          href={`https://crxcavator.io/report/${encodeURIComponent(meta.id)}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-brass hover:underline flex items-center gap-1"
-                        >
-                          <span>CRXcavator Audit</span>
-                          <ExternalLink className="w-3 h-3" />
-                        </a>
+                        {meta.id.length === 32 ? (
+                          <a
+                            href={`https://chrome-stats.com/d/${encodeURIComponent(meta.id)}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-brass hover:underline flex items-center gap-1"
+                          >
+                            <span>Chrome-Stats</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        ) : null}
                         <a
                           href={meta.id.length === 32 ? `https://chromewebstore.google.com/detail/${meta.id}` : `https://addons.mozilla.org/en-US/firefox/addon/${meta.id}/`}
                           target="_blank"

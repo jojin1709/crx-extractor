@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<?xml-stylesheet type="text/xsl" href="/sitemap.xsl"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://getcrx.vercel.app/</loc>
@@ -53,10 +52,46 @@
     <loc>https://getcrx.vercel.app/?id=ghbmnnjldporikfpidnegoabhlneaffd</loc>
     <lastmod>2026-10-04</lastmod>
     <changefreq>weekly</changefreq>
-    <priority>0.7</priority>
+    <priority>0.8</priority>
   </url>
   <url>
     <loc>https://getcrx.vercel.app/?id=aapbdbdomjkkjkaonfhkkikfgjllcleb</loc>
+    <lastmod>2026-10-04</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://getcrx.vercel.app/?id=bmnlcjabgnpnenekpadlanbbkooimhnj</loc>
+    <lastmod>2026-10-04</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://getcrx.vercel.app/?id=hdokiejnpimakedhajhdlcegeplioahd</loc>
+    <lastmod>2026-10-04</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://getcrx.vercel.app/?id=kbfnbcaeplbcioakkpcpgfkobkghlhen</loc>
+    <lastmod>2026-10-04</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://getcrx.vercel.app/?id=bhlhnicpbjkfdgahfnagbmclhjfdkgcf</loc>
+    <lastmod>2026-10-04</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://getcrx.vercel.app/?id=djclckldekblhggdelalapcmpnglnmnb</loc>
+    <lastmod>2026-10-04</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://getcrx.vercel.app/?id=hmdpfiekegfcbmldgflmfdglfkedfdhi</loc>
     <lastmod>2026-10-04</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
