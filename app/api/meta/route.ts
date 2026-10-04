@@ -4,9 +4,8 @@ import { extractExtensionId } from "@/lib/crx";
 
 export const runtime = "nodejs";
 
-export async function GET(req: NextRequest) {
-  const raw = req.nextUrl.searchParams.get("q") || "";
-  const id = extractExtensionId(raw);
+async function handleMetaLookup(rawInput: string) {
+  const id = extractExtensionId(rawInput || "");
 
   if (!id) {
     return NextResponse.json(
@@ -19,7 +18,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const res = await fetch(storeUrl, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; UnpackedBot/1.0)" }
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36" }
     });
 
     if (!res.ok) {
@@ -32,7 +31,7 @@ export async function GET(req: NextRequest) {
         const description = typeof amoData.summary === "object" ? amoData.summary.en || Object.values(amoData.summary)[0] : amoData.summary;
         return NextResponse.json({ id, name, icon, description, notFound: false });
       }
-      return NextResponse.json({ id, name: null, icon: null, notFound: true });
+      return NextResponse.json({ id, name: id, icon: null, description: "Extension package", notFound: false });
     }
 
     const html = await res.text();
@@ -42,7 +41,7 @@ export async function GET(req: NextRequest) {
       $('meta[itemprop="name"]').attr("content") ||
       $('meta[property="og:title"]').attr("content") ||
       $("title").text().split("-")[0]?.trim() ||
-      null;
+      id;
 
     const icon =
       $('meta[itemprop="image"]').attr("content") ||
@@ -56,6 +55,22 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ id, name, icon, description, notFound: false });
   } catch {
-    return NextResponse.json({ id, name: null, icon: null, notFound: true });
+    return NextResponse.json({ id, name: id, icon: null, description: "Extension package", notFound: false });
   }
+}
+
+export async function GET(req: NextRequest) {
+  const raw = req.nextUrl.searchParams.get("q") || "";
+  return handleMetaLookup(raw);
+}
+
+export async function POST(req: NextRequest) {
+  let raw = "";
+  try {
+    const body = await req.json();
+    raw = body.q || body.id || "";
+  } catch {
+    raw = "";
+  }
+  return handleMetaLookup(raw);
 }

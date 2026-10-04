@@ -78,15 +78,8 @@ async function downloadCrxBuffer(id: string): Promise<Buffer | null> {
   return null;
 }
 
-export async function POST(req: NextRequest) {
-  let body: { q?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
-  }
-
-  const id = extractExtensionId(body.q ?? "");
+async function handleExtract(rawInput: string) {
+  const id = extractExtensionId(rawInput ?? "");
   if (!id) {
     return NextResponse.json(
       { error: "Couldn't find a valid 32-character extension ID in that input." },
@@ -135,3 +128,20 @@ export async function POST(req: NextRequest) {
     }
   });
 }
+
+export async function GET(req: NextRequest) {
+  const raw = req.nextUrl.searchParams.get("q") || req.nextUrl.searchParams.get("id") || "";
+  return handleExtract(raw);
+}
+
+export async function POST(req: NextRequest) {
+  let body: { q?: string; id?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
+
+  return handleExtract(body.q || body.id || "");
+}
+
